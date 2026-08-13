@@ -59,8 +59,17 @@
   .muted { color: var(--muted); }
   .only-mobile { display: none; }
 
+  #iv-mobile { display: none; }
+
   /* ===== MOBILE: jedna kolumna, wykres caly ekran, szuflady ===== */
   @media (max-width: 860px) {
+    .iv-btn { display: none; }              /* interwaly przenosza sie na wykres */
+    #iv-mobile { display: flex; position: absolute; top: 10px; left: 10px; z-index: 20;
+      gap: 6px; background: #1e222dd9; border: 1px solid var(--border);
+      border-radius: 8px; padding: 4px; }
+    #iv-mobile button { background: none; border: none; color: var(--muted);
+      padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+    #iv-mobile button.active { background: var(--accent); color: #fff; }
     #layout { grid-template-columns: 1fr; grid-template-rows: 44px 30px 1fr; }
     header { overflow-x: auto; scrollbar-width: none; }
     header::-webkit-scrollbar { display: none; }
@@ -132,7 +141,15 @@
     <div style="padding:0 12px" class="muted"><label><input type="checkbox" id="only-fav"> tylko obserwowane ★</label></div>
     <div id="symbol-list"></div>
   </aside>
-  <div id="main"><div id="chart"></div></div>
+  <div id="main">
+    <div id="chart"></div>
+    <div id="iv-mobile">
+      <button data-iv="15min">15m</button>
+      <button data-iv="60min">1H</button>
+      <button data-iv="4hour">4H</button>
+      <button data-iv="1day" class="active">1D</button>
+    </div>
+  </div>
   <div id="right">
     <div class="panel"><h3>Arkusz (live)</h3><div id="book" class="muted">łączenie…</div></div>
     <div class="panel calc">
@@ -1007,12 +1024,14 @@ $("symbol-list").addEventListener("click", async (e) => {
 });
 $("search").addEventListener("input", renderList);
 $("only-fav").addEventListener("change", renderList);
-document.querySelectorAll(".iv-btn").forEach((b) => b.addEventListener("click", () => {
-  document.querySelectorAll(".iv-btn").forEach((x) => x.classList.remove("active"));
-  b.classList.add("active");
-  state.interval = b.dataset.iv;
+function chooseInterval(iv) {
+  state.interval = iv;
+  document.querySelectorAll(".iv-btn, #iv-mobile button").forEach((x) =>
+    x.classList.toggle("active", x.dataset.iv === iv));
   loadSymbol(state.symbol);
-}));
+}
+document.querySelectorAll(".iv-btn, #iv-mobile button").forEach((b) =>
+  b.addEventListener("click", (e) => { e.stopPropagation(); chooseInterval(b.dataset.iv); }));
 $("btn-refresh").addEventListener("click", () => loadSymbol(state.symbol));
 $("btn-ichimoku").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleIchimoku()));
 $("btn-fibo").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleFibo()));
