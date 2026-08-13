@@ -57,11 +57,35 @@
   .calc .warn { color: #f5c518; }
   #signals-panel .sig { padding: 3px 0; border-bottom: 1px solid #2a2e3955; font-size: 12px; }
   .muted { color: var(--muted); }
+  .only-mobile { display: none; }
+
+  /* ===== MOBILE: jedna kolumna, wykres caly ekran, szuflady ===== */
+  @media (max-width: 860px) {
+    #layout { grid-template-columns: 1fr; grid-template-rows: 44px 30px 1fr; }
+    header { overflow-x: auto; scrollbar-width: none; }
+    header::-webkit-scrollbar { display: none; }
+    header .sym { font-size: 14px; white-space: nowrap; }
+    header .px { font-size: 14px; }
+    .iv-btn, .tool-btn { padding: 4px 7px; white-space: nowrap; }
+    #info-bar { overflow-x: auto; scrollbar-width: none; gap: 12px; }
+    .only-mobile { display: inline-block; }
+    aside, #right {
+      position: fixed; top: 44px; bottom: 0; width: min(85vw, 340px); z-index: 60;
+      transition: transform .25s ease; box-shadow: 0 0 30px #000c;
+      border: none;
+    }
+    aside { left: 0; transform: translateX(-105%); }
+    aside.open { transform: translateX(0); }
+    #right { right: 0; transform: translateX(105%); overflow-y: auto; }
+    #right.open { transform: translateX(0); }
+    #main { grid-column: 1; grid-row: 3; }
+  }
 </style>
 </head>
 <body>
 <div id="layout">
   <header>
+    <button class="tool-btn only-mobile" id="btn-coins">☰ Coiny</button>
     <span class="sym" id="h-sym">—</span>
     <button class="tool-btn" id="btn-info" title="co to za coin?">ℹ️</button>
     <span class="px" id="h-px">—</span>
@@ -90,6 +114,7 @@
     <button class="tool-btn" id="btn-delist">Delisting</button>
     <button class="tool-btn" id="btn-news">Newsy</button>
     <button class="tool-btn" id="btn-refresh">Odśwież</button>
+    <button class="tool-btn only-mobile" id="btn-panel">Panel ▸</button>
     <span id="live-dot" title="live"></span>
   </header>
   <div id="modal" style="display:none;position:fixed;inset:0;background:#000a;z-index:50">
@@ -923,6 +948,8 @@ function setHeaderPrice(px) {
 }
 
 async function loadSymbol(sym) {
+  document.querySelector("aside").classList.remove("open");
+  $("right").classList.remove("open");
   state.symbol = sym;
   $("h-sym").textContent = sym.toUpperCase().replace(/USDT$/, "/USDT");
   document.querySelectorAll(".sym-row").forEach((r) => r.classList.toggle("active", r.dataset.sym === sym));
@@ -1115,6 +1142,27 @@ $("btn-delist").addEventListener("click", async () => {
   }).join("");
   openModal(`Delistingi (${anns.length})`,
     rows + `<p class="muted" style="margin-top:8px">Klik w nazwę coina = jego wykres (znacznik DELIST widoczny na świecach dziennych). Źródła: Binance, OKX, Bybit, KuCoin, statusy HTX — kolejne giełdy dojdą.</p>`);
+});
+
+// --- mobile: szuflady (lista coinow / panel boczny) ---
+const aside = document.querySelector("aside");
+const right = $("right");
+$("btn-coins").addEventListener("click", () => {
+  right.classList.remove("open");
+  aside.classList.toggle("open");
+});
+$("btn-panel").addEventListener("click", () => {
+  aside.classList.remove("open");
+  right.classList.toggle("open");
+});
+// wybor coina na telefonie zamyka szuflade
+$("symbol-list").addEventListener("click", (e) => {
+  if (e.target.closest(".sym-row") && !e.target.dataset.star) aside.classList.remove("open");
+});
+// klik w wykres chowa szuflady
+$("main").addEventListener("click", () => {
+  aside.classList.remove("open");
+  right.classList.remove("open");
 });
 
 (async function init() {
