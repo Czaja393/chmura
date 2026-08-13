@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#131722">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Chmura — wykresy</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
+<style>
+  :root {
+    --bg: #131722; --panel: #1e222d; --border: #2a2e39; --text: #d1d4dc;
+    --muted: #787b86; --green: #26a69a; --red: #ef5350; --accent: #2962ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 13px/1.45 "Segoe UI", system-ui, sans-serif; height: 100vh; overflow: hidden; }
+  #layout { display: grid; grid-template-columns: 240px 1fr 300px; grid-template-rows: 44px 26px 1fr; height: 100vh; }
+  header { grid-column: 1 / 4; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  #info-bar { grid-column: 1 / 4; display: flex; align-items: center; gap: 18px; padding: 0 14px;
+    background: var(--panel); border-bottom: 1px solid var(--border); color: var(--muted);
+    font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+  #info-bar b { color: var(--text); font-weight: 600; }
+  header .sym { font-size: 16px; font-weight: 600; }
+  header .px { font-size: 16px; font-variant-numeric: tabular-nums; }
+  header .chg.up { color: var(--green); } header .chg.down { color: var(--red); }
+  .iv-btn, .tool-btn { background: none; border: 1px solid transparent; color: var(--muted); padding: 4px 9px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  .iv-btn:hover, .tool-btn:hover { color: var(--text); }
+  .iv-btn.active { background: var(--accent); color: #fff; }
+  #live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  #live-dot.on { background: var(--green); }
+  aside { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  aside input { margin: 8px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
+  #symbol-list { overflow-y: auto; flex: 1; }
+  .sym-row { display: flex; justify-content: space-between; padding: 5px 12px; cursor: pointer; }
+  .sym-row:hover { background: #2a2e3966; }
+  .sym-row.active { background: #2962ff22; }
+  .sym-row .star { color: var(--muted); cursor: pointer; }
+  .sym-row .star.fav { color: #f5c518; }
+  #main { position: relative; }
+  #chart { position: absolute; inset: 0; }
+  #right { background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
+  .panel h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; letter-spacing: .4px; }
+  #book { font-variant-numeric: tabular-nums; font-size: 12px; }
+  #book .row { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 1px 2px; position: relative; }
+  #book .row .bar { position: absolute; right: 0; top: 0; bottom: 0; opacity: .12; }
+  #book .ask .p { color: var(--red); } #book .bid .p { color: var(--green); }
+  #book .spread { text-align: center; color: var(--muted); padding: 3px 0; border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border); }
+  .calc label { display: block; color: var(--muted); margin-top: 6px; font-size: 11px; }
+  .calc input, .calc select { width: 100%; padding: 5px 7px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
+  .calc .out { margin-top: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-variant-numeric: tabular-nums; }
+  .calc .out div { display: flex; justify-content: space-between; padding: 1px 0; }
+  .calc .out .net { font-weight: 700; border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
+  .calc .warn { color: #f5c518; }
+  #signals-panel .sig { padding: 3px 0; border-bottom: 1px solid #2a2e3955; font-size: 12px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="layout">
+  <header>
+    <span class="sym" id="h-sym">—</span>
+    <button class="tool-btn" id="btn-info" title="co to za coin?">ℹ️</button>
+    <span class="px" id="h-px">—</span>
+    <span class="chg" id="h-chg"></span>
+    <span style="width:14px"></span>
+    <button class="iv-btn" data-iv="15min">15m</button>
+    <button class="iv-btn" data-iv="60min">1H</button>
+    <button class="iv-btn" data-iv="4hour">4H</button>
+    <button class="iv-btn active" data-iv="1day">1D</button>
+    <span style="flex:1"></span>
+    <div style="position:relative">
+      <button class="tool-btn" id="btn-ma">MA ▾</button>
+      <div id="ma-menu" style="display:none;position:absolute;top:30px;right:0;background:#1e222d;border:1px solid #2a2e39;border-radius:6px;padding:8px;z-index:30;min-width:110px">
+        <label style="display:block;padding:2px"><input type="checkbox" data-ma="SMA20"> SMA 20</label>
+        <label style="display:block;padding:2px"><input type="checkbox" data-ma="SMA50"> SMA 50</label>
+        <label style="display:block;padding:2px"><input type="checkbox" data-ma="SMA200"> SMA 200</label>
+        <label style="display:block;padding:2px"><input type="checkbox" data-ma="EMA12"> EMA 12</label>
+        <label style="display:block;padding:2px"><input type="checkbox" data-ma="EMA26"> EMA 26</label>
+      </div>
+    </div>
+    <button class="tool-btn" id="btn-ichimoku">Ichimoku</button>
+    <button class="tool-btn" id="btn-fibo">Fibo auto</button>
+    <button class="tool-btn" id="btn-fibo2" title="dwa klikniecia na wykresie">Fibo 2pkt</button>
+    <button class="tool-btn" id="btn-ruler" title="dwa klikniecia: zmierz % miedzy punktami">Miarka %</button>
+    <button class="tool-btn" id="btn-signals">Sygnały</button>
+    <button class="tool-btn" id="btn-delist">Delisting</button>
+    <button class="tool-btn" id="btn-news">Newsy</button>
+    <button class="tool-btn" id="btn-refresh">Odśwież</button>
+    <span id="live-dot" title="live"></span>
+  </header>
+  <div id="modal" style="display:none;position:fixed;inset:0;background:#000a;z-index:50">
+    <div style="max-width:820px;margin:5vh auto;background:#1e222d;border:1px solid #2a2e39;border-radius:8px;max-height:85vh;display:flex;flex-direction:column">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #2a2e39">
+        <b id="modal-title">—</b>
+        <button class="tool-btn" id="modal-close">✕ zamknij</button>
+      </div>
+      <div id="modal-body" style="overflow-y:auto;padding:10px 14px"></div>
+    </div>
+  </div>
+  <div id="info-bar"><span class="muted">ładowanie danych coina…</span></div>
+  <aside>
+    <input id="search" placeholder="Szukaj pary… (np. fun)">
+    <div style="padding:0 12px" class="muted"><label><input type="checkbox" id="only-fav"> tylko obserwowane ★</label></div>
+    <div id="symbol-list"></div>
+  </aside>
+  <div id="main"><div id="chart"></div></div>
+  <div id="right">
+    <div class="panel"><h3>Arkusz (live)</h3><div id="book" class="muted">łączenie…</div></div>
+    <div class="panel calc">
+      <h3>Kalkulator płynności i prowizji</h3>
+      <label>Kierunek</label>
+      <select id="c-side"><option value="sell">SPRZEDAJĘ (w market)</option><option value="buy">KUPUJĘ (w market)</option></select>
+      <label>Kwota (USD)</label>
+      <input id="c-qty" type="number" placeholder="np. 20000" min="0" step="any">
+      <label style="display:flex;gap:6px;align-items:center;margin-top:4px">
+        <input id="c-mode" type="checkbox" style="width:auto"> podaję w coinach, nie w USD
+      </label>
+      <label>Cena wejścia (opcjonalnie — policzy zysk)</label>
+      <input id="c-entry" type="number" placeholder="np. 0.004" min="0" step="any">
+      <label>Prowizja za transakcję (%)</label>
+      <input id="c-fee" type="number" value="0.2" step="0.01" min="0">
+      <label>Prowizja przewalutowania (%, jeśli dotyczy)</label>
+      <input id="c-conv" type="number" value="0" step="0.01" min="0">
+      <div class="out" id="c-out"><div class="muted">Podaj ilość — liczę po żywym arkuszu.</div></div>
+    </div>
+    <div class="panel calc" id="orders-panel">
+      <h3>Zlecenie (kupno)</h3>
+      <label>Kwota (USD)</label>
+      <input id="o-budget" type="number" placeholder="np. 500" min="1" step="any">
+      <label>Tryb</label>
+      <select id="o-mode">
+        <option value="ladder">WG ZASAD — 25/35/40 + auto-wyjście 1,30×</option>
+        <option value="twap">TWAP — na raty (nie robi świecy)</option>
+        <option value="market">Market — od razu</option>
+        <option value="limit">Limit — po mojej cenie</option>
+        <option value="sell">SPRZEDAŻ market — ilość w coinach</option>
+      </select>
+      <div id="o-limit-opts" style="display:none">
+        <label>Cena limit</label>
+        <input id="o-price" type="number" placeholder="np. 0.004" min="0" step="any">
+      </div>
+      <div id="o-twap-opts">
+        <label>Rozłóż na (godzin)</label>
+        <input id="o-hours" type="number" value="12" min="1" step="1">
+        <label>Liczba transz</label>
+        <input id="o-slices" type="number" value="8" min="2" step="1">
+      </div>
+      <button class="tool-btn" id="o-create" style="margin-top:8px;border:1px solid var(--accent);color:var(--text);width:100%">
+        Utwórz zlecenie → potwierdź w Telegramie
+      </button>
+      <div id="o-msg" class="muted" style="margin-top:6px;font-size:11px"></div>
+      <div id="o-list" style="margin-top:8px"></div>
+    </div>
+    <div class="panel" id="signals-panel"><h3>Sygnały (ten coin)</h3><div id="sig-list" class="muted">—</div></div>
+  </div>
+</div>
+<script type="module">
+// Konfiguracja aplikacji (klucz anon = publiczny odczyt, RLS pilnuje reszty)
+const SUPABASE_URL = "https://eogynuiretqkaesnrmnp.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVvZ3ludWlyZXRxa2Flc25ybW5wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5NzkyNzAsImV4cCI6MjA5NTU1NTI3MH0.6uELEUTb7FkpHpZhYnvKLcZAG0xV_cTraoFlFxr1uyc";
+const DEFAULT_FEE_PCT = 0.2;  // spot HTX taker; zmien w Ustawieniach
+
+
+// Wskazniki wlasne (faza 2 startuje tutaj): baza wolumenu, Ichimoku, Fibo.
+
+function rollMedianShift1(vals, window = 30, minPeriods = 20) {
+  const out = new Array(vals.length).fill(NaN);
+  for (let i = 0; i < vals.length; i++) {
+    const w = vals.slice(Math.max(0, i - window), i).filter(Number.isFinite);
+    if (w.length >= minPeriods) {
+      w.sort((a, b) => a - b);
+      const m = w.length >> 1;
+      out[i] = w.length % 2 ? w[m] : (w[m - 1] + w[m]) / 2;
+    }
+  }
+  return out;
+}
+
+const hh = (rows, i, n) => Math.max(...rows.slice(Math.max(0, i - n + 1), i + 1).map((r) => r.high));
+const ll = (rows, i, n) => Math.min(...rows.slice(Math.max(0, i - n + 1), i + 1).map((r) => r.low));
+
+function ichimoku(rows, tenkanN = 9, kijunN = 26, spanBN = 52) {
+  const step = rows.length > 1 ? rows[rows.length - 1].time - rows[rows.length - 2].time : 86400;
+  const tenkan = [], kijun = [], spanA = [], spanB = [], chikou = [];
+  for (let i = 0; i < rows.length; i++) {
+    const t = rows[i].time;
+    if (i >= tenkanN - 1) tenkan.push({ time: t, value: (hh(rows, i, tenkanN) + ll(rows, i, tenkanN)) / 2 });
+    if (i >= kijunN - 1) kijun.push({ time: t, value: (hh(rows, i, kijunN) + ll(rows, i, kijunN)) / 2 });
+    if (i >= kijunN - 1) {
+      const a = ((hh(rows, i, tenkanN) + ll(rows, i, tenkanN)) / 2 + (hh(rows, i, kijunN) + ll(rows, i, kijunN)) / 2) / 2;
+      spanA.push({ time: t + kijunN * step, value: a });   // przesuniecie 26 w przod
+    }
+    if (i >= spanBN - 1) spanB.push({ time: t + kijunN * step, value: (hh(rows, i, spanBN) + ll(rows, i, spanBN)) / 2 });
+    if (i >= kijunN) chikou.push({ time: rows[i - kijunN].time, value: rows[i].close }); // close przesuniety wstecz
+  }
+  return { tenkan, kijun, spanA, spanB, chikou };
+}
+
+function sma(rows, n) {
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < rows.length; i++) {
+    sum += rows[i].close;
+    if (i >= n) sum -= rows[i - n].close;
+    if (i >= n - 1) out.push({ time: rows[i].time, value: sum / n });
+  }
+  return out;
+}
+
+function ema(rows, n) {
+  const out = [];
+  const k = 2 / (n + 1);
+  let prev = null;
+  for (let i = 0; i < rows.length; i++) {
+    prev = prev === null ? rows[i].close : rows[i].close * k + prev * (1 - k);
+    if (i >= n - 1) out.push({ time: rows[i].time, value: prev });
+  }
+  return out;
+}
+
+// poziomy Fibo miedzy dwoma recznymi kotwicami (jak na TradingView)
+function fiboBetween(p1, p2) {
+  const hi = Math.max(p1, p2), lo = Math.min(p1, p2), span = hi - lo;
+  return [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1].map((f) => ({
+    label: `${(f * 100).toFixed(1)}%`, price: hi - span * f,
+  }));
+}
+
+function fiboLevels(rows, lookback = 180) {
+  // auto z wykrywaniem kierunku: jesli dolek byl PRZED szczytem (trend wzrostowy),
+  // mierzymy zniesienia ruchu w gore (0% na szczycie); w przeciwnym razie odwrotnie
+  const seg = rows.slice(-lookback);
+  if (!seg.length) return [];
+  let hi = -Infinity, lo = Infinity, hiI = 0, loI = 0;
+  seg.forEach((r, i) => {
+    if (r.high > hi) { hi = r.high; hiI = i; }
+    if (r.low < lo) { lo = r.low; loI = i; }
+  });
+  const span = hi - lo;
+  const uptrend = loI <= hiI;
+  return [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1].map((f) => ({
+    label: `${(f * 100).toFixed(1)}%`,
+    price: uptrend ? hi - span * f : lo + span * f,
+  }));
+}
+
+
+// Dostep do Supabase przez REST (klucz anon, RLS: tylko odczyt + watchlista).
+
+
+const H = { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` };
+
+async function rest(path) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: H });
+  if (!r.ok) throw new Error(`REST ${r.status}: ${path}`);
+  return r.json();
+}
+
+async function fetchSymbols() {
+  return rest(`symbols?select=symbol,state&order=symbol.asc&limit=2000`);
+}
+
+async function fetchWatchlist() {
+  const rows = await rest(`watchlist?select=symbol`);
+  return new Set(rows.map((r) => r.symbol));
+}
+
+async function toggleWatch(symbol, isFav) {
+  const opts = { headers: { ...H, "Content-Type": "application/json", Prefer: "return=minimal" } };
+  if (isFav) {
+    await fetch(`${SUPABASE_URL}/rest/v1/watchlist?symbol=eq.${symbol}`, { ...opts, method: "DELETE" });
+  } else {
+    await fetch(`${SUPABASE_URL}/rest/v1/watchlist`, { ...opts, method: "POST", body: JSON.stringify({ symbol }) });
+  }
+}
+
+async function fetchCandles(symbol, interval, want = 1500) {
+  const rows = [];
+  for (let off = 0; off < want; off += 1000) {
+    const page = await rest(
+      `candles?symbol=eq.${symbol}&interval=eq.${interval}` +
+      `&select=ts,open,high,low,close,vol,count&order=ts.desc&limit=${Math.min(1000, want - off)}&offset=${off}`);
+    rows.push(...page);
+    if (page.length < 1000) break;
+  }
+  rows.reverse();
+  return rows.map((r) => ({
+    time: Math.floor(Date.parse(r.ts) / 1000),
+    open: +r.open, high: +r.high, low: +r.low, close: +r.close,
+    vol: +r.vol, count: +r.count,
+  }));
+}
+
+async function fetchSignals(symbol) {
+  return rest(`signals?symbol=eq.${symbol}&select=ts,kind,strength,detail&order=ts.asc&limit=1000`);
+}
+
+// sygnaly LIVE (od startu systemu 2026-08-11) + wyniki z trackera
+async function fetchLiveSignals() {
+  const sigs = await rest(
+    `signals?ts=gte.2026-08-11T00:00:00Z&kind=not.in.(awake,grupa_a)` +
+    `&select=id,ts,symbol,kind,strength&order=ts.desc&limit=500`);
+  if (!sigs.length) return [];
+  const ids = sigs.map((s) => s.id).join(",");
+  const rev = await rest(`signal_review?signal_id=in.(${ids})&select=signal_id,ret_now_pct,mfe_pct,mae_pct,outcome`);
+  const byId = new Map(rev.map((r) => [r.signal_id, r]));
+  return sigs.map((s) => ({ ...s, review: byId.get(s.id) || null }));
+}
+
+async function fetchDelistings(symbol) {
+  return rest(`announcements?kind=eq.delisting&symbol_hits=cs.{${symbol}}` +
+              `&select=source,title,published_at,seen_at&order=seen_at.desc&limit=20`);
+}
+
+// data po polsku, w dobie HTX (UTC+8)
+function plDate(ts, withYear = true) {
+  const d = new Date(Date.parse(ts) + 8 * 3600 * 1000);
+  const dd = String(d.getUTCDate()).padStart(2, "0"), mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return withYear ? `${dd}.${mm}.${d.getUTCFullYear()}` : `${dd}.${mm}`;
+}
+
+// pasek info: wolumen 24h + baza 30d (nasze dane) + kapitalizacja (CoinGecko, cache)
+const mcapCache = new Map();
+async function fetchCoinInfo(symbol) {
+  // wolumen 24h KROCZACY (jak ticker HTX): suma ostatnich 24 swiec godzinowych;
+  // na zywo nadpisuje go subskrypcja market.detail z websocketu
+  const h1 = await rest(`candles?symbol=eq.${symbol}&interval=eq.60min&select=vol&order=ts.desc&limit=24`);
+  const vol24 = h1.length ? h1.reduce((a, r) => a + +r.vol, 0) : null;
+  const rows = await rest(`candles?symbol=eq.${symbol}&interval=eq.1day&select=ts,vol&order=ts.desc&limit=31`);
+  const hist = rows.slice(1).map((r) => +r.vol).sort((a, b) => a - b);
+  const base = hist.length >= 20
+    ? (hist.length % 2 ? hist[hist.length >> 1] : (hist[(hist.length >> 1) - 1] + hist[hist.length >> 1]) / 2)
+    : null;
+  const baseSym = symbol.replace(/usdt$/, "");
+  let mcap = mcapCache.get(baseSym);
+  if (mcap === undefined) {
+    mcap = null;
+    try {
+      const s = await (await fetch(`https://api.coingecko.com/api/v3/search?query=${baseSym}`)).json();
+      const coin = (s.coins || []).find((c) => String(c.symbol).toLowerCase() === baseSym);
+      if (coin) {
+        const m = await (await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${coin.id}`)).json();
+        mcap = m?.[0]?.market_cap ?? null;
+      }
+    } catch (_e) { /* limit CoinGecko - trudno */ }
+    mcapCache.set(baseSym, mcap);
+  }
+  return { vol24, base, mcap };
+}
+
+// Etap 2: zlecenia - aplikacja tworzy TYLKO drafty (RLS); potwierdzenie w Telegramie
+async function createOrder(symbol, mode, budget, hours, nSlices, limitPrice = null) {
+  const payload = mode === "sell"
+    ? { symbol, mode: "market", side: "sell", base_qty: budget, budget_usdt: 0, limit_price: limitPrice }
+    : { symbol, mode, budget_usdt: budget, limit_price: limitPrice,
+        hours: mode === "twap" ? hours : 0,
+        n_slices: mode === "twap" ? nSlices : 1 };
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/orders`, {
+    method: "POST",
+    headers: { ...H, "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`orders: ${r.status}`);
+  return (await r.json())[0];
+}
+
+async function fetchOrders(symbol) {
+  return rest(`orders?symbol=eq.${symbol}&select=id,mode,budget_usdt,done_usdt,status,created_at&order=id.desc&limit=8`);
+}
+
+async function fetchNews(limit = 40) {
+  return rest(`news?select=source,title,title_pl,url,published_at&order=published_at.desc.nullslast&limit=${limit}`);
+}
+
+const descCache = new Map();
+async function fetchCoinDescription(symbol) {
+  const base = symbol.replace(/usdt$/, "");
+  if (descCache.has(base)) return descCache.get(base);
+  let out = null;
+  try {
+    const s = await (await fetch(`https://api.coingecko.com/api/v3/search?query=${base}`)).json();
+    const coin = (s.coins || []).find((c) => String(c.symbol).toLowerCase() === base);
+    if (coin) {
+      const d = await (await fetch(`https://api.coingecko.com/api/v3/coins/${coin.id}?localization=true&tickers=false&market_data=true&community_data=false&developer_data=false`)).json();
+      out = {
+        name: d?.name ?? coin.name,
+        symbol: String(coin.symbol).toUpperCase(),
+        rank: d?.market_cap_rank ?? null,
+        categories: (d?.categories || []).filter(Boolean).slice(0, 5),
+        desc: (d?.description?.pl || d?.description?.en || "").replace(/<[^>]+>/g, "").trim(),
+        isPl: Boolean(d?.description?.pl),
+        home: d?.links?.homepage?.[0] || null,
+        mcap: d?.market_data?.market_cap?.usd ?? null,
+      };
+    }
+  } catch (_e) { /* limit CoinGecko */ }
+  descCache.set(base, out);
+  return out;
+}
+
+async function fetchDelistingsAll() {
+  return rest(`announcements?kind=eq.delisting&select=source,title,url,published_at,seen_at,symbol_hits` +
+              `&order=seen_at.desc&limit=60`);
+}
+
+
+// Websocket HTX (publiczny): swiece tick-po-ticku + arkusz bid/ask.
+// Ramki sa gzipowane -> pako.inflate; ping/pong utrzymuje polaczenie.
+const WS_URL = "wss://api.huobi.pro/ws";
+
+class HtxFeed {
+  constructor({ onKline, onDepth, onDetail, onStatus }) {
+    this.onKline = onKline; this.onDepth = onDepth;
+    this.onDetail = onDetail || (() => {});
+    this.onStatus = onStatus || (() => {});
+    this.ws = null; this.subs = []; this.alive = false;
+    this._connect();
+  }
+
+  _connect() {
+    this.ws = new WebSocket(WS_URL);
+    this.ws.binaryType = "arraybuffer";
+    this.ws.onopen = () => { this.alive = true; this.onStatus(true); this.subs.forEach((s) => this._send({ sub: s })); };
+    this.ws.onclose = () => { this.alive = false; this.onStatus(false); setTimeout(() => this._connect(), 2000); };
+    this.ws.onerror = () => this.ws.close();
+    this.ws.onmessage = (e) => {
+      const m = JSON.parse(pako.inflate(new Uint8Array(e.data), { to: "string" }));
+      if (m.ping) { this._send({ pong: m.ping }); return; }
+      if (!m.ch || !m.tick) return;
+      if (m.ch.includes(".kline.")) this.onKline(m.ch, m.tick);
+      else if (m.ch.includes(".depth.")) this.onDepth(m.ch, m.tick);
+      else if (m.ch.endsWith(".detail")) this.onDetail(m.ch, m.tick);
+    };
+  }
+
+  _send(obj) { if (this.ws?.readyState === 1) this.ws.send(JSON.stringify(obj)); }
+
+  // przelacza subskrypcje na nowy symbol/interwal (unsub starych)
+  watch(symbol, htxPeriod) {
+    for (const s of this.subs) this._send({ unsub: s });
+    this.subs = [`market.${symbol}.kline.${htxPeriod}`, `market.${symbol}.depth.step0`,
+                 `market.${symbol}.detail`];
+    if (this.alive) this.subs.forEach((s) => this._send({ sub: s }));
+  }
+}
+
+const HTX_PERIOD = { "15min": "15min", "60min": "60min", "4hour": "4hour", "1day": "1day" };
+
+
+// Wykres v3: swiece + wolumen z baza + znaczniki na KAZDYM interwale + wskazniki
+// + narzedzia stylu TradingView (miarka %, Fibo z 2 kotwic) rysowane na kanwie
+// z podgladem za kursorem: 1. klik = kotwica, ruch = podglad, 2. klik = utrwalenie.
+
+
+const KIND_MARK = {
+  flush:               { color: "#26a69a", shape: "arrowUp",   text: "OKAZJA" },
+  retrace_opportunity: { color: "#2962ff", shape: "arrowUp",   text: "BUDUJ" },
+  exit:                { color: "#ef5350", shape: "arrowDown", text: "WYJDZ" },
+  wave:                { color: "#ff9800", shape: "circle",    text: "FALA" },
+  grupa_b:             { color: "#ab47bc", shape: "arrowUp",   text: "GRUPA" },
+  grupa_c:             { color: "#8d6e63", shape: "circle",    text: "KLIMAKS" },
+};
+const MA_DEFS = {
+  SMA20:  { fn: sma, n: 20,  color: "#42a5f5" },
+  SMA50:  { fn: sma, n: 50,  color: "#f5c518" },
+  SMA200: { fn: sma, n: 200, color: "#ef5350" },
+  EMA12:  { fn: ema, n: 12,  color: "#26a69a" },
+  EMA26:  { fn: ema, n: 26,  color: "#ab47bc" },
+};
+const fp = (v) => (v >= 1 ? v.toFixed(4) : v.toPrecision(5));
+
+// Wypelniona chmura Ichimoku
+class CloudPrimitive {
+  constructor(chart, series, getSpans) { this._c = chart; this._s = series; this._get = getSpans; }
+  updateAllViews() {}
+  paneViews() {
+    return [{
+      renderer: () => ({
+        draw: (target) => target.useMediaCoordinateSpace(({ context: ctx }) => {
+          const { spanA, spanB } = this._get() || {};
+          if (!spanA?.length || !spanB?.length) return;
+          const byTime = new Map(spanB.map((p) => [p.time, p.value]));
+          const pts = [];
+          for (const p of spanA) {
+            const b = byTime.get(p.time);
+            if (b === undefined) continue;
+            const x = this._c.timeScale().timeToCoordinate(p.time);
+            const ya = this._s.priceToCoordinate(p.value);
+            const yb = this._s.priceToCoordinate(b);
+            if (x === null || ya === null || yb === null) continue;
+            pts.push({ x, ya, yb, up: p.value >= b });
+          }
+          let seg = [];
+          const flush = () => {
+            if (seg.length < 2) { seg = []; return; }
+            ctx.beginPath();
+            ctx.moveTo(seg[0].x, seg[0].ya);
+            for (const q of seg) ctx.lineTo(q.x, q.ya);
+            for (let i = seg.length - 1; i >= 0; i--) ctx.lineTo(seg[i].x, seg[i].yb);
+            ctx.closePath();
+            ctx.fillStyle = seg[0].up ? "rgba(38,166,154,0.16)" : "rgba(239,83,80,0.16)";
+            ctx.fill();
+            seg = [];
+          };
+          for (const q of pts) {
+            if (seg.length && seg[seg.length - 1].up !== q.up) { seg.push(q); flush(); seg = [q]; }
+            else seg.push(q);
+          }
+          flush();
+        }),
+      }),
+    }];
+  }
+}
+
+// Narzedzia: miarka % / Fibo 2pkt - rysowane na kanwie, podglad za kursorem
+class ToolPrimitive {
+  constructor(chart, series, dataRef) {
+    this._c = chart; this._s = series; this._data = dataRef;
+    this.mode = null;    // 'ruler' | 'fibo2'
+    this.p1 = null; this.p2 = null; this.preview = null;
+    this._ru = null;
+  }
+  attached(param) { this._ru = param.requestUpdate; }
+  refresh() { if (this._ru) this._ru(); }
+  updateAllViews() {}
+  paneViews() {
+    return [{
+      renderer: () => ({
+        draw: (target) => target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+          const a = this.p1, b = this.p2 ?? this.preview;
+          if (!this.mode || !a || !b) return;
+          const ts = this._c.timeScale();
+          const x1 = ts.timeToCoordinate(a.time), y1 = this._s.priceToCoordinate(a.price);
+          const x2 = ts.timeToCoordinate(b.time), y2 = this._s.priceToCoordinate(b.price);
+          if ([x1, y1, x2, y2].some((v) => v === null)) return;
+          if (this.mode === "ruler") this._ruler(ctx, x1, y1, x2, y2, a, b);
+          else this._fibo(ctx, x1, x2, a, b, mediaSize);
+        }),
+      }),
+    }];
+  }
+  _ruler(ctx, x1, y1, x2, y2, a, b) {
+    const up = b.price >= a.price;
+    const col = up ? "38,166,154" : "239,83,80";
+    ctx.fillStyle = `rgba(${col},0.13)`;
+    ctx.fillRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1) || 2, Math.abs(y2 - y1) || 2);
+    ctx.strokeStyle = `rgb(${col})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    const chg = (b.price / a.price - 1) * 100;
+    const data = this._data();
+    const i1 = data.findIndex((r) => r.time === a.time), i2 = data.findIndex((r) => r.time === b.time);
+    const bars = i1 >= 0 && i2 >= 0 ? Math.abs(i2 - i1) : "?";
+    const lines = [`${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%`, `${fp(a.price)} → ${fp(b.price)}`, `słupki: ${bars}`];
+    ctx.font = "12px Segoe UI";
+    const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16;
+    const bx = Math.min(Math.max(4, x2 + 10), (ctx.canvas?.width ?? 9999) - w - 4);
+    const by = Math.max(4, y2 - 52);
+    ctx.fillStyle = `rgba(${col},0.95)`;
+    ctx.beginPath(); ctx.roundRect(bx, by, w, 50, 6); ctx.fill();
+    ctx.fillStyle = "#fff";
+    lines.forEach((l, i) => ctx.fillText(l, bx + 8, by + 15 + i * 15));
+  }
+  _fibo(ctx, x1, x2, a, b, mediaSize) {
+    const xa = Math.min(x1, x2), xb = Math.max(x1, x2);
+    ctx.font = "11px Segoe UI";
+    for (const lv of fiboBetween(a.price, b.price)) {
+      const y = this._s.priceToCoordinate(lv.price);
+      if (y === null) continue;
+      ctx.strokeStyle = "rgba(245,197,24,0.75)";
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.moveTo(xa, y); ctx.lineTo(xb, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#f5c518";
+      ctx.fillText(`${lv.label}  ${fp(lv.price)}`, Math.min(xb + 6, (mediaSize?.width ?? 9999) - 90), y + 4);
+    }
+  }
+}
+
+class ChmuraChart {
+  constructor(el) {
+    this.el = el;
+    this.chart = LightweightCharts.createChart(el, {
+      layout: { background: { color: "#131722" }, textColor: "#d1d4dc" },
+      grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
+      crosshair: { mode: 0 },
+      timeScale: { timeVisible: true, borderColor: "#2a2e39" },
+      rightPriceScale: { borderColor: "#2a2e39" },
+      autoSize: true,
+    });
+    this.candles = this.chart.addCandlestickSeries({
+      upColor: "#26a69a", downColor: "#ef5350", wickUpColor: "#26a69a",
+      wickDownColor: "#ef5350", borderVisible: false,
+      priceFormat: { type: "price", precision: 8, minMove: 1e-8 },
+    });
+    this.volume = this.chart.addHistogramSeries({
+      priceScaleId: "vol", priceFormat: { type: "volume" }, color: "#26a69a55",
+    });
+    this.baseline = this.chart.addLineSeries({
+      priceScaleId: "vol", color: "#f5c518", lineWidth: 1,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    });
+    this.chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
+    this.ichSeries = []; this.fibSeries = [];
+    this.maSeries = {}; this.data = [];
+    this._spans = null; this._cloud = null;
+
+    this.tool = new ToolPrimitive(this.chart, this.candles, () => this.data);
+    this.candles.attachPrimitive(this.tool);
+    this.chart.subscribeClick((p) => this._onClick(p));
+    this.chart.subscribeCrosshairMove((p) => {
+      if (!this.tool.mode || !this.tool.p1 || this.tool.p2 || !p.point || p.time === undefined) return;
+      const price = this.candles.coordinateToPrice(p.point.y);
+      if (price === null) return;
+      this.tool.preview = { time: p.time, price };
+      this.tool.refresh();
+    });
+  }
+
+  setData(rows) {
+    this.data = rows;
+    this.candles.setData(rows);
+    this.volume.setData(rows.map((r) => ({
+      time: r.time, value: r.vol, color: r.close >= r.open ? "#26a69a55" : "#ef535055",
+    })));
+    const med = rollMedianShift1(rows.map((r) => r.vol), 30, 20);
+    this.baseline.setData(rows.map((r, i) => ({ time: r.time, value: med[i] }))
+      .filter((p) => Number.isFinite(p.value)));
+    for (const key of Object.keys(this.maSeries)) this._refreshMA(key);
+    if (this.ichSeries.length) { this.toggleIchimoku(); this.toggleIchimoku(); }
+    this.clearTool();
+    this.chart.timeScale().fitContent();
+  }
+
+  updateLast(t) {
+    const last = this.data[this.data.length - 1];
+    const row = { time: t.id, open: t.open, high: t.high, low: t.low, close: t.close, vol: t.vol, count: t.count };
+    if (last && t.id < last.time) return;
+    if (last && t.id === last.time) this.data[this.data.length - 1] = row;
+    else this.data.push(row);
+    this.candles.update({ time: row.time, open: row.open, high: row.high, low: row.low, close: row.close });
+    this.volume.update({ time: row.time, value: row.vol, color: row.close >= row.open ? "#26a69a55" : "#ef535055" });
+  }
+
+  // znaczniki na KAZDYM interwale: sygnal (doba HTX) przyciagany do pierwszej
+  // swiecy danego dnia, delisting do najblizszej swiecy
+  setMarkersAll(signals, delistings) {
+    if (!this.data.length) { this.candles.setMarkers([]); return; }
+    const times = this.data.map((r) => r.time);
+    const snap = (t) => {
+      let lo = 0, hi = times.length - 1, ans = null;
+      while (lo <= hi) {
+        const m = (lo + hi) >> 1;
+        if (times[m] >= t) { ans = times[m]; hi = m - 1; } else lo = m + 1;
+      }
+      if (ans !== null && ans - t < 86400) return ans;          // pierwsza swieca doby
+      return times[times.length - 1] >= t - 86400 ? null : null;
+    };
+    const marks = [];
+    for (const s of signals) {
+      const mk = KIND_MARK[s.kind];
+      if (!mk) continue;
+      const t = snap(Math.floor(Date.parse(s.ts) / 1000));
+      if (t === null) continue;
+      marks.push({ time: t, position: mk.shape === "arrowDown" ? "aboveBar" : "belowBar",
+                   color: mk.color, shape: mk.shape, text: mk.text });
+    }
+    for (const d of delistings || []) {
+      const t = snap(Math.floor(Date.parse(d.published_at || d.seen_at) / 1000));
+      if (t !== null) marks.push({ time: t, position: "aboveBar", color: "#ff1744",
+                                   shape: "square", text: `DELIST:${(d.source || "").toUpperCase()}` });
+    }
+    marks.sort((a, b) => a.time - b.time);
+    this.candles.setMarkers(marks);
+  }
+
+  toggleMA(key) {
+    if (this.maSeries[key]) {
+      this.chart.removeSeries(this.maSeries[key]); delete this.maSeries[key]; return false;
+    }
+    this.maSeries[key] = this.chart.addLineSeries({
+      color: MA_DEFS[key].color, lineWidth: 1, priceLineVisible: false,
+      lastValueVisible: false, crosshairMarkerVisible: false, title: key,
+    });
+    this._refreshMA(key);
+    return true;
+  }
+  _refreshMA(key) { this.maSeries[key].setData(MA_DEFS[key].fn(this.data, MA_DEFS[key].n)); }
+
+  toggleIchimoku() {
+    if (this.ichSeries.length) {
+      if (this._cloud) { this.candles.detachPrimitive(this._cloud); this._cloud = null; }
+      this.ichSeries.forEach((s) => this.chart.removeSeries(s)); this.ichSeries = [];
+      this._spans = null;
+      return false;
+    }
+    const ich = ichimoku(this.data);
+    this._spans = { spanA: ich.spanA, spanB: ich.spanB };
+    const mk = (color, data) => {
+      const s = this.chart.addLineSeries({ color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+      s.setData(data); this.ichSeries.push(s);
+    };
+    mk("#2962ff", ich.tenkan); mk("#b71c1c", ich.kijun);
+    mk("#26a69a88", ich.spanA); mk("#ef535088", ich.spanB); mk("#78909c", ich.chikou);
+    this._cloud = new CloudPrimitive(this.chart, this.candles, () => this._spans);
+    this.candles.attachPrimitive(this._cloud);
+    return true;
+  }
+
+  toggleFibo() {
+    if (this.fibSeries.length) {
+      this.fibSeries.forEach((s) => this.chart.removeSeries(s)); this.fibSeries = []; return false;
+    }
+    const t0 = this.data[Math.max(0, this.data.length - 180)]?.time, t1 = this.data[this.data.length - 1]?.time;
+    for (const lv of fiboLevels(this.data, 180)) {
+      const s = this.chart.addLineSeries({ color: "#f5c51888", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: true, title: `Fibo ${lv.label}`, crosshairMarkerVisible: false });
+      s.setData([{ time: t0, value: lv.price }, { time: t1, value: lv.price }]);
+      this.fibSeries.push(s);
+    }
+    return true;
+  }
+
+  // --- narzedzia ---
+  armTool(mode) {
+    this.clearTool();
+    this.tool.mode = mode;
+    this.el.style.cursor = mode ? "crosshair" : "default";
+  }
+  clearTool() {
+    this.tool.mode = null; this.tool.p1 = null; this.tool.p2 = null; this.tool.preview = null;
+    this.tool.refresh();
+    this.el.style.cursor = "default";
+  }
+  _onClick(p) {
+    if (!this.tool.mode || !p.point || p.time === undefined) return;
+    const price = this.candles.coordinateToPrice(p.point.y);
+    if (price === null) return;
+    if (!this.tool.p1) { this.tool.p1 = { time: p.time, price }; }
+    else if (!this.tool.p2) {
+      this.tool.p2 = { time: p.time, price };
+      this.el.style.cursor = "default";
+    } else { this.clearTool(); return; }
+    this.tool.refresh();
+  }
+}
+
+
+// Arkusz bid/ask + kalkulator plynnosci (market-impact) i prowizji.
+const fmtP = (p) => (p >= 1 ? p.toFixed(4) : p.toPrecision(5));
+const fmtN = (v) => Math.round(v).toLocaleString("pl-PL");
+
+class OrderBook {
+  constructor(bookEl, calcEls) {
+    this.el = bookEl; this.c = calcEls;
+    this.bids = []; this.asks = [];
+    ["qty", "entry", "fee", "conv", "side"].forEach((k) =>
+      this.c[k].addEventListener("input", () => this.recalc()));
+    this.c.mode.addEventListener("change", () => this.recalc());
+  }
+
+  update(tick) {
+    this.bids = (tick.bids || []).map(([p, q]) => [+p, +q]);
+    this.asks = (tick.asks || []).map(([p, q]) => [+p, +q]);
+    this.render();
+    this.recalc();
+  }
+
+  render(depth = 12) {
+    if (!this.bids.length) { this.el.textContent = "brak danych arkusza"; return; }
+    const maxQ = Math.max(...this.asks.slice(0, depth).map(([, q]) => q),
+                          ...this.bids.slice(0, depth).map(([, q]) => q));
+    const row = (p, q, cls) => `
+      <div class="row ${cls}">
+        <span class="p">${fmtP(p)}</span><span>${fmtN(q)}</span><span>${fmtN(p * q)} $</span>
+        <span class="bar" style="width:${(q / maxQ) * 100}%;background:${cls === "ask" ? "#ef5350" : "#26a69a"}"></span>
+      </div>`;
+    const spread = this.asks[0][0] - this.bids[0][0];
+    const spreadPct = (spread / this.asks[0][0]) * 100;
+    this.el.innerHTML =
+      [...this.asks.slice(0, depth)].reverse().map(([p, q]) => row(p, q, "ask")).join("") +
+      `<div class="spread">spread ${fmtP(spread)} (${spreadPct.toFixed(2)}%)</div>` +
+      this.bids.slice(0, depth).map(([p, q]) => row(p, q, "bid")).join("");
+  }
+
+  // zejscie po arkuszu: ile dostane / zaplace i do jakiej ceny zejde
+  walk(levels, qty) {
+    let remaining = qty, quote = 0, worst = null;
+    for (const [p, q] of levels) {
+      const take = Math.min(remaining, q);
+      quote += take * p; remaining -= take; worst = p;
+      if (remaining <= 0) break;
+    }
+    return { filledQty: qty - remaining, quote, worst, unfilled: remaining };
+  }
+
+  // zejscie po arkuszu az do uzbierania docelowej KWOTY w USD
+  walkQuote(levels, targetQuote) {
+    let remainingQ = targetQuote, qty = 0, quote = 0, worst = null;
+    for (const [p, q] of levels) {
+      const lvlQuote = p * q;
+      const takeQ = Math.min(remainingQ, lvlQuote);
+      qty += takeQ / p; quote += takeQ; remainingQ -= takeQ; worst = p;
+      if (remainingQ <= 0) break;
+    }
+    return { filledQty: qty, quote, worst, unfilledQuote: remainingQ };
+  }
+
+  recalc() {
+    const out = this.c.out;
+    const amount = parseFloat(this.c.qty.value);
+    if (!Number.isFinite(amount) || amount <= 0 || !this.bids.length) {
+      out.innerHTML = `<div class="muted">Podaj kwotę — liczę po żywym arkuszu.</div>`; return;
+    }
+    const inCoins = this.c.mode.checked;
+    const side = this.c.side.value;
+    const feePct = (parseFloat(this.c.fee.value) || 0) / 100;
+    const convPct = (parseFloat(this.c.conv.value) || 0) / 100;
+    const entry = parseFloat(this.c.entry.value);
+    const best = side === "sell" ? this.bids[0][0] : this.asks[0][0];
+    const levels = side === "sell" ? this.bids : this.asks;
+    let w, qty;
+    if (inCoins) {
+      qty = amount;
+      w = this.walk(levels, qty);
+    } else {
+      const wq = this.walkQuote(levels, amount);
+      qty = wq.filledQty;
+      w = { filledQty: wq.filledQty, quote: wq.quote, worst: wq.worst,
+            unfilled: wq.unfilledQuote > 0 ? wq.unfilledQuote / (wq.worst || best) : 0 };
+    }
+    const avg = w.quote / w.filledQty;
+    const slip = Math.abs(avg / best - 1) * 100;
+    const fee = w.quote * feePct;
+    const conv = w.quote * convPct;
+    const net = side === "sell" ? w.quote - fee - conv : -(w.quote + fee + conv);
+
+    const L = [];
+    L.push(`<div><span>Najlepsza cena</span><span>${fmtP(best)}</span></div>`);
+    L.push(`<div><span>Zejdziesz do ceny</span><span><b>${fmtP(w.worst)}</b> (${(((w.worst / best) - 1) * 100).toFixed(2)}%)</span></div>`);
+    L.push(`<div><span>Średnia wykonania</span><span>${fmtP(avg)} (poślizg ${slip.toFixed(2)}%)</span></div>`);
+    L.push(`<div><span>Wartość ${side === "sell" ? "sprzedaży" : "zakupu"}</span><span>${fmtN(w.quote)} $</span></div>`);
+    L.push(`<div><span>Prowizja transakcji (${(feePct * 100).toFixed(2)}%)</span><span>-${fmtN(fee)} $</span></div>`);
+    if (convPct > 0) L.push(`<div><span>Przewalutowanie (${(convPct * 100).toFixed(2)}%)</span><span>-${fmtN(conv)} $</span></div>`);
+    if (side === "sell") {
+      L.push(`<div class="net"><span>NA RĘKĘ</span><span>${fmtN(net)} $</span></div>`);
+      if (Number.isFinite(entry) && entry > 0) {
+        const cost = qty * entry;
+        const entryFee = cost * feePct;
+        const pnl = net - cost - entryFee;
+        L.push(`<div><span>Koszt wejścia (z prowizją)</span><span>${fmtN(cost + entryFee)} $</span></div>`);
+        L.push(`<div class="net"><span>ZYSK/STRATA</span><span style="color:${pnl >= 0 ? "#26a69a" : "#ef5350"}">${pnl >= 0 ? "+" : ""}${fmtN(pnl)} $ (${((pnl / (cost + entryFee)) * 100).toFixed(1)}%)</span></div>`);
+      }
+    } else {
+      L.push(`<div class="net"><span>ZAPŁACISZ ŁĄCZNIE</span><span>${fmtN(-net)} $</span></div>`);
+    }
+    if (w.unfilled > 0) {
+      L.push(`<div class="warn"><span>UWAGA: arkusz za płytki</span><span>nie zmieści się ${fmtN(w.unfilled)} szt.</span></div>`);
+    }
+    out.innerHTML = L.join("");
+  }
+}
+
+
+// Sklejenie aplikacji: lista par, wykres live, arkusz, kalkulator, sygnaly.
+
+
+const fmtUsd = (v) => v == null ? "—" : Math.round(v).toLocaleString("pl-PL") + " $";
+
+
+
+
+const $ = (id) => document.getElementById(id);
+const state = { symbol: "funusdt", interval: "1day", symbols: [], fav: new Set(), signals: [] };
+
+const chart = new ChmuraChart($("chart"));
+const book = new OrderBook($("book"), {
+  qty: $("c-qty"), entry: $("c-entry"), fee: $("c-fee"), conv: $("c-conv"),
+  side: $("c-side"), out: $("c-out"), mode: $("c-mode"),
+});
+
+const feed = new HtxFeed({
+  onStatus: (on) => $("live-dot").classList.toggle("on", on),
+  onKline: (ch, tick) => {
+    if (!ch.includes(`market.${state.symbol}.`)) return;
+    chart.updateLast(tick);
+    setHeaderPrice(tick.close);
+  },
+  onDepth: (ch, tick) => {
+    if (!ch.includes(`market.${state.symbol}.`)) return;
+    book.update(tick);
+  },
+  onDetail: (ch, tick) => {
+    // kroczacy wolumen 24h z tickera HTX - identyczny z tym, co pokazuje gielda
+    if (!ch.includes(`market.${state.symbol}.`) || !state.info) return;
+    state.info.vol24 = tick.vol;
+    renderInfoBar();
+  },
+});
+
+function renderInfoBar() {
+  const i = state.info;
+  if (!i) return;
+  $("info-bar").innerHTML =
+    `<span>Wolumen 24h (HTX): <b>${fmtUsd(i.vol24)}</b></span>` +
+    `<span>Norma 30 dni: <b>${fmtUsd(i.base)}</b>${i.vol24 && i.base ? ` <span class="muted">(24h = ${(i.vol24 / i.base).toFixed(1)}× normy)</span>` : ""}</span>` +
+    `<span>Kapitalizacja: <b>${fmtUsd(i.mcap)}</b></span>`;
+}
+
+function setHeaderPrice(px) {
+  $("h-px").textContent = px >= 1 ? px.toFixed(4) : px.toPrecision(5);
+  const first = chart.data[Math.max(0, chart.data.length - 2)];
+  if (first) {
+    const chg = (px / first.close - 1) * 100;
+    const el = $("h-chg");
+    el.textContent = `${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%`;
+    el.className = `chg ${chg >= 0 ? "up" : "down"}`;
+  }
+}
+
+async function loadSymbol(sym) {
+  state.symbol = sym;
+  $("h-sym").textContent = sym.toUpperCase().replace(/USDT$/, "/USDT");
+  document.querySelectorAll(".sym-row").forEach((r) => r.classList.toggle("active", r.dataset.sym === sym));
+  const rows = await fetchCandles(sym, state.interval);
+  chart.setData(rows);
+  if (rows.length) setHeaderPrice(rows[rows.length - 1].close);
+  state.signals = await fetchSignals(sym);
+  state.delist = await fetchDelistings(sym);
+  chart.setMarkersAll(state.signals, state.delist);
+  renderSignalsPanel();
+  feed.watch(sym, HTX_PERIOD[state.interval]);
+  // pasek info (wolumen / baza / kapitalizacja) - nie blokuje wykresu
+  renderOrders();
+  state.info = null;
+  $("info-bar").innerHTML = `<span class="muted">ładowanie danych coina…</span>`;
+  fetchCoinInfo(sym).then((info) => {
+    if (state.symbol !== sym) return;
+    state.info = info;
+    renderInfoBar();
+  });
+}
+
+function renderSignalsPanel() {
+  const KIND = { flush: "OKAZJA?", retrace_opportunity: "BUDUJ POZYCJE?", exit: "WYCHODZ", wave: "FALA", awake: "BUDZI SIE", grupa_a: "CICHA AKUM.", grupa_b: "SCHEMAT GRUPY?", grupa_c: "KLIMAKS DYSTR." };
+  const last = [...state.signals].reverse().slice(0, 15);
+  $("sig-list").innerHTML = last.length
+    ? last.map((s) => `<div class="sig"><b>${KIND[s.kind] ?? s.kind}</b> <span class="muted">${plDate(s.ts)}</span> siła ${s.strength}</div>`).join("")
+    : "Brak sygnałów.";
+}
+
+function renderList() {
+  const q = $("search").value.trim().toLowerCase();
+  const onlyFav = $("only-fav").checked;
+  const items = state.symbols
+    .filter((s) => (!q || s.symbol.includes(q)) && (!onlyFav || state.fav.has(s.symbol)))
+    .slice(0, 400);
+  $("symbol-list").innerHTML = items.map((s) => `
+    <div class="sym-row ${s.symbol === state.symbol ? "active" : ""}" data-sym="${s.symbol}">
+      <span>${s.symbol.toUpperCase().replace(/USDT$/, "")}</span>
+      <span class="star ${state.fav.has(s.symbol) ? "fav" : ""}" data-star="${s.symbol}">★</span>
+    </div>`).join("");
+}
+
+$("symbol-list").addEventListener("click", async (e) => {
+  const star = e.target.dataset.star;
+  if (star) {
+    const isFav = state.fav.has(star);
+    await toggleWatch(star, isFav);
+    isFav ? state.fav.delete(star) : state.fav.add(star);
+    renderList();
+    return;
+  }
+  const sym = e.target.closest(".sym-row")?.dataset.sym;
+  if (sym) loadSymbol(sym);
+});
+$("search").addEventListener("input", renderList);
+$("only-fav").addEventListener("change", renderList);
+document.querySelectorAll(".iv-btn").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll(".iv-btn").forEach((x) => x.classList.remove("active"));
+  b.classList.add("active");
+  state.interval = b.dataset.iv;
+  loadSymbol(state.symbol);
+}));
+$("btn-refresh").addEventListener("click", () => loadSymbol(state.symbol));
+$("btn-ichimoku").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleIchimoku()));
+$("btn-fibo").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleFibo()));
+$("btn-fibo2").addEventListener("click", () => chart.armTool("fibo2"));
+$("btn-ruler").addEventListener("click", () => chart.armTool("ruler"));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") chart.clearTool(); });
+$("btn-ma").addEventListener("click", () => {
+  const m = $("ma-menu");
+  m.style.display = m.style.display === "none" ? "block" : "none";
+});
+document.querySelectorAll("#ma-menu input").forEach((cb) =>
+  cb.addEventListener("change", () => chart.toggleMA(cb.dataset.ma)));
+
+// --- modal: sygnaly live systemu / delistingi ---
+const KIND_PL = { flush: "OKAZJA?", retrace_opportunity: "BUDUJ?", exit: "WYCHODZ", wave: "FALA", grupa_b: "GRUPA?", grupa_c: "KLIMAKS" };
+function openModal(title, html) {
+  $("modal-title").textContent = title;
+  $("modal-body").innerHTML = html;
+  $("modal").style.display = "block";
+}
+$("modal-close").addEventListener("click", () => $("modal").style.display = "none");
+$("modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("modal").style.display = "none"; });
+$("modal-body").addEventListener("click", (e) => {
+  const sym = e.target.closest("[data-goto]")?.dataset.goto;
+  if (sym) { $("modal").style.display = "none"; loadSymbol(sym); }
+});
+
+$("btn-signals").addEventListener("click", async () => {
+  openModal("Sygnały systemu (od startu 11.08)", `<div class="muted">ładowanie…</div>`);
+  const sigs = await fetchLiveSignals();
+  const fmt = (v) => v == null ? "—" : `${v >= 0 ? "+" : ""}${Number(v).toFixed(1)}%`;
+  const rows = sigs.map((s) => {
+    const r = s.review;
+    const col = r && r.ret_now_pct != null ? (r.ret_now_pct >= 0 ? "#26a69a" : "#ef5350") : "#787b86";
+    const oc = r?.outcome === "profit" ? " ✅+20%" : r?.outcome === "stop" ? " ⛔-20%" : "";
+    return `<tr data-goto="${s.symbol}" style="cursor:pointer;border-bottom:1px solid #2a2e3955">
+      <td style="padding:4px 8px">${plDate(s.ts)}</td>
+      <td style="padding:4px 8px"><b>${s.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
+      <td style="padding:4px 8px">${KIND_PL[s.kind] ?? s.kind}</td>
+      <td style="padding:4px 8px">${s.strength}</td>
+      <td style="padding:4px 8px;color:${col}">${fmt(r?.ret_now_pct)}${oc}</td>
+      <td style="padding:4px 8px" class="muted">${fmt(r?.mfe_pct)} / ${fmt(r?.mae_pct)}</td>
+    </tr>`;
+  }).join("");
+  openModal(`Sygnały systemu — od startu 11.08 (${sigs.length})`,
+    `<table style="width:100%;border-collapse:collapse;font-size:12px">
+      <tr class="muted"><th style="text-align:left;padding:4px 8px">data</th><th style="text-align:left;padding:4px 8px">coin</th>
+      <th style="text-align:left;padding:4px 8px">sygnał</th><th style="text-align:left;padding:4px 8px">siła</th>
+      <th style="text-align:left;padding:4px 8px">wynik teraz</th><th style="text-align:left;padding:4px 8px">max / min</th></tr>${rows}</table>
+    <p class="muted" style="margin-top:8px">Klik w wiersz = wykres coina. Wyniki liczone od ceny sygnału (tracker, odświeżany co dobę i po komendzie "raport").</p>`);
+});
+
+// --- zlecenia (Etap 2): draft w apce -> TAK/NIE w Telegramie -> egzekutor ---
+const ORDER_ST = { draft: "czeka na TAK w Telegramie", armed: "uzbrojone", running: "w trakcie",
+                   done: "zakończone", cancelled: "anulowane", error: "BŁĄD" };
+async function renderOrders() {
+  const os = await fetchOrders(state.symbol);
+  $("o-list").innerHTML = os.length
+    ? os.map((o) => `<div class="sig">#${o.id} ${o.mode} ${Math.round(o.done_usdt)}/${Math.round(o.budget_usdt)} $
+        — <span class="${o.status === 'error' ? '' : 'muted'}">${ORDER_ST[o.status] ?? o.status}</span></div>`).join("")
+    : "";
+}
+$("o-mode").addEventListener("change", () => {
+  const m = $("o-mode").value;
+  $("o-twap-opts").style.display = m === "twap" ? "block" : "none";
+  $("o-limit-opts").style.display = (m === "limit" || m === "sell") ? "block" : "none";
+  $("o-price").placeholder = m === "sell" ? "puste = market" : "np. 0.004";
+  $("o-budget").placeholder = m === "sell" ? "ilość w coinach, np. 100000" : "np. 500";
+});
+$("o-create").addEventListener("click", async () => {
+  const budget = parseFloat($("o-budget").value);
+  if (!Number.isFinite(budget) || budget <= 0) { $("o-msg").textContent = "Podaj kwotę."; return; }
+  const mode = $("o-mode").value;
+  const px = parseFloat($("o-price").value);
+  if (mode === "limit" && !(px > 0)) { $("o-msg").textContent = "Podaj cenę limit."; return; }
+  try {
+    const o = await createOrder(state.symbol, mode, budget,
+      parseFloat($("o-hours").value) || 12, parseInt($("o-slices").value) || 8,
+      (mode === "limit" || (mode === "sell" && px > 0)) ? px : null);
+    $("o-msg").textContent = `Zlecenie #${o.id} utworzone jako szkic — potwierdź w Telegramie (przyjdzie prośba do 2 min).`;
+    renderOrders();
+  } catch (e) {
+    $("o-msg").textContent = `Błąd: ${e.message}`;
+  }
+});
+
+$("btn-news").addEventListener("click", async () => {
+  openModal("Newsy", `<div class="muted">ładowanie…</div>`);
+  const news = await fetchNews();
+  const rows = news.map((n) => `
+    <div style="padding:6px 0;border-bottom:1px solid #2a2e3955">
+      <a href="${n.url}" target="_blank" style="color:#d1d4dc;text-decoration:none" title="${n.title}">${n.title_pl || n.title}</a>
+      <div class="muted" style="font-size:11px">${n.source} • ${n.published_at ? plDate(n.published_at) : ""}</div>
+    </div>`).join("");
+  openModal(`Newsy (${news.length})`,
+    (rows || `<div class="muted">Brak newsów — pierwszy zaciąg za chwilę (cron co 30 min).</div>`) +
+    `<p class="muted" style="margin-top:8px">Źródła: Cointelegraph, CoinDesk (po angielsku — polskie tłumaczenia w planach). Klik otwiera artykuł.</p>`);
+});
+
+$("btn-info").addEventListener("click", async () => {
+  const sym = state.symbol;
+  openModal(`Info: ${sym.toUpperCase().replace(/USDT$/, "")}`, `<div class="muted">pytam CoinGecko…</div>`);
+  const d = await fetchCoinDescription(sym);
+  if (!d) { openModal("Info", `<div class="muted">Brak danych w CoinGecko dla tego coina.</div>`); return; }
+  openModal(`${d.name} (${d.symbol})`,
+    `<div style="line-height:1.6">
+      ${d.rank ? `<div><span class="muted">Ranking kapitalizacji:</span> <b>#${d.rank}</b></div>` : ""}
+      ${d.mcap ? `<div><span class="muted">Kapitalizacja:</span> <b>${Math.round(d.mcap).toLocaleString("pl-PL")} $</b></div>` : ""}
+      ${d.categories.length ? `<div><span class="muted">Kategorie:</span> ${d.categories.join(", ")}</div>` : ""}
+      ${d.home ? `<div><span class="muted">Strona:</span> <a href="${d.home}" target="_blank" style="color:#2962ff">${d.home}</a></div>` : ""}
+      <p style="margin-top:10px;white-space:pre-wrap">${d.desc ? d.desc.slice(0, 2000) : "Brak opisu."}</p>
+      ${d.desc && !d.isPl ? `<p class="muted">(opis po angielsku — CoinGecko nie ma polskiej wersji dla tego coina)</p>` : ""}
+    </div>`);
+});
+
+$("btn-delist").addEventListener("click", async () => {
+  openModal("Delistingi", `<div class="muted">ładowanie…</div>`);
+  const anns = await fetchDelistingsAll();
+  const rows = anns.map((a) => {
+    const hits = (a.symbol_hits || []).map((h) =>
+      `<span data-goto="${h}" style="cursor:pointer;color:#2962ff;margin-right:6px">${h.toUpperCase().replace(/USDT$/, "")}</span>`).join("");
+    return `<div style="padding:6px 0;border-bottom:1px solid #2a2e3955">
+      <div><b style="color:#ff1744">[${a.source.toUpperCase()}]</b> <span class="muted">${plDate(a.published_at || a.seen_at)}</span></div>
+      <div>${a.title}</div>
+      <div>${hits || '<span class="muted">brak naszych par w tytule</span>'}</div>
+    </div>`;
+  }).join("");
+  openModal(`Delistingi (${anns.length})`,
+    rows + `<p class="muted" style="margin-top:8px">Klik w nazwę coina = jego wykres (znacznik DELIST widoczny na świecach dziennych). Źródła: Binance, OKX, Bybit, KuCoin, statusy HTX — kolejne giełdy dojdą.</p>`);
+});
+
+(async function init() {
+  state.symbols = await fetchSymbols();
+  state.fav = await fetchWatchlist();
+  renderList();
+  await loadSymbol(state.symbol);
+})();
+
+</script>
+<script>if (location.protocol === "https:" && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");</script>
+</body>
+</html>
