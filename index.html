@@ -148,6 +148,9 @@
       <button data-iv="60min">1H</button>
       <button data-iv="4hour">4H</button>
       <button data-iv="1day" class="active">1D</button>
+      <span style="width:1px;background:#2a2e39;margin:2px 2px"></span>
+      <button data-tool="ruler" title="miarka: przeciągnij po wykresie">📏</button>
+      <button data-tool="fibo2" title="Fibo: przeciągnij od dołka do szczytu">ƒ</button>
     </div>
   </div>
   <div id="right">
@@ -575,12 +578,14 @@ class ToolPrimitive {
       renderer: () => ({
         draw: (target) => target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
           const a = this.p1, b = this.p2 ?? this.preview;
-          if (!this.mode || !a || !b) return;
+          if (!a || !b) return;
+          if (!this.mode && !this.p2) return;   // rysuj w trakcie LUB gdy skonczone
+          this._lastMode = this.mode ?? this._lastMode;
           const ts = this._c.timeScale();
           const x1 = ts.timeToCoordinate(a.time), y1 = this._s.priceToCoordinate(a.price);
           const x2 = ts.timeToCoordinate(b.time), y2 = this._s.priceToCoordinate(b.price);
           if ([x1, y1, x2, y2].some((v) => v === null)) return;
-          if (this.mode === "ruler") this._ruler(ctx, x1, y1, x2, y2, a, b);
+          if ((this.mode ?? this._lastMode) === "ruler") this._ruler(ctx, x1, y1, x2, y2, a, b);
           else this._fibo(ctx, x1, x2, a, b, mediaSize);
         }),
       }),
@@ -654,14 +659,52 @@ class ChmuraChart {
 
     this.tool = new ToolPrimitive(this.chart, this.candles, () => this.data);
     this.candles.attachPrimitive(this.tool);
-    this.chart.subscribeClick((p) => this._onClick(p));
-    this.chart.subscribeCrosshairMove((p) => {
-      if (!this.tool.mode || !this.tool.p1 || this.tool.p2 || !p.point || p.time === undefined) return;
-      const price = this.candles.coordinateToPrice(p.point.y);
-      if (price === null) return;
-      this.tool.preview = { time: p.time, price };
+    // narzedzia rysowane PRZECIAGNIECIEM (palcem/myszka), jak na TradingView
+    this._dragging = false;
+    el.addEventListener("pointerdown", (e) => {
+      if (!this.tool.mode) return;
+      e.preventDefault();
+      const tp = this._toTimePrice(e);
+      if (!tp) return;
+      this._dragging = true;
+      el.setPointerCapture?.(e.pointerId);
+      this.tool.p1 = tp; this.tool.p2 = null; this.tool.preview = tp;
       this.tool.refresh();
-    });
+    }, { passive: false });
+    el.addEventListener("pointermove", (e) => {
+      if (!this._dragging) return;
+      e.preventDefault();
+      const tp = this._toTimePrice(e);
+      if (tp) { this.tool.preview = tp; this.tool.refresh(); }
+    }, { passive: false });
+    const finish = (e) => {
+      if (!this._dragging) return;
+      this._dragging = false;
+      const tp = this._toTimePrice(e) ?? this.tool.preview;
+      this.tool.p2 = tp;
+      this.tool.mode = null;          // rysunek zostaje, wykres znow reaguje na pan/zoom
+      this._setPan(true);
+      this.el.style.cursor = "default";
+      this.tool.refresh();
+    };
+    el.addEventListener("pointerup", finish, { passive: false });
+    el.addEventListener("pointercancel", finish, { passive: false });
+  }
+
+  _toTimePrice(e) {
+    const rect = this.el.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    const logical = this.chart.timeScale().coordinateToLogical(x);
+    if (logical === null || !this.data.length) return null;
+    const i = Math.max(0, Math.min(this.data.length - 1, Math.round(logical)));
+    const price = this.candles.coordinateToPrice(y);
+    if (price === null) return null;
+    return { time: this.data[i].time, price };
+  }
+
+  _setPan(on) {
+    this.chart.applyOptions({ handleScroll: on, handleScale: on });
+    this.el.style.touchAction = on ? "auto" : "none";
   }
 
   setData(rows) {
@@ -767,27 +810,20 @@ class ChmuraChart {
     return true;
   }
 
-  // --- narzedzia ---
+  // --- narzedzia (przeciaganie) ---
   armTool(mode) {
+    if (this.tool.mode === mode && !this.tool.p2) { this.clearTool(); return; } // drugi klik = wylacz
     this.clearTool();
     this.tool.mode = mode;
-    this.el.style.cursor = mode ? "crosshair" : "default";
+    this._setPan(false);                 // na czas rysowania wykres nie panuje
+    this.el.style.cursor = "crosshair";
   }
   clearTool() {
     this.tool.mode = null; this.tool.p1 = null; this.tool.p2 = null; this.tool.preview = null;
+    this._dragging = false;
+    this._setPan(true);
     this.tool.refresh();
     this.el.style.cursor = "default";
-  }
-  _onClick(p) {
-    if (!this.tool.mode || !p.point || p.time === undefined) return;
-    const price = this.candles.coordinateToPrice(p.point.y);
-    if (price === null) return;
-    if (!this.tool.p1) { this.tool.p1 = { time: p.time, price }; }
-    else if (!this.tool.p2) {
-      this.tool.p2 = { time: p.time, price };
-      this.el.style.cursor = "default";
-    } else { this.clearTool(); return; }
-    this.tool.refresh();
   }
 }
 
@@ -1030,8 +1066,10 @@ function chooseInterval(iv) {
     x.classList.toggle("active", x.dataset.iv === iv));
   loadSymbol(state.symbol);
 }
-document.querySelectorAll(".iv-btn, #iv-mobile button").forEach((b) =>
+document.querySelectorAll(".iv-btn, #iv-mobile button[data-iv]").forEach((b) =>
   b.addEventListener("click", (e) => { e.stopPropagation(); chooseInterval(b.dataset.iv); }));
+document.querySelectorAll("#iv-mobile button[data-tool]").forEach((b) =>
+  b.addEventListener("click", (e) => { e.stopPropagation(); chart.armTool(b.dataset.tool); }));
 $("btn-refresh").addEventListener("click", () => loadSymbol(state.symbol));
 $("btn-ichimoku").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleIchimoku()));
 $("btn-fibo").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleFibo()));
