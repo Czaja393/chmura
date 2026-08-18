@@ -35,11 +35,15 @@
   aside { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
   aside input { margin: 8px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
   #symbol-list { overflow-y: auto; flex: 1; }
-  .sym-row { display: flex; justify-content: space-between; padding: 5px 12px; cursor: pointer; }
+  .sym-row { display: flex; align-items: center; gap: 6px; padding: 5px 12px; cursor: pointer; }
   .sym-row:hover { background: #2a2e3966; }
   .sym-row.active { background: #2962ff22; }
+  .sym-row .sym-meta { margin-left: auto; color: var(--muted); font-size: 11px;
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
   .sym-row .star { color: var(--muted); cursor: pointer; }
   .sym-row .star.fav { color: #f5c518; }
+  #list-opts { display: flex; align-items: center; gap: 8px; padding: 2px 12px 6px; }
+  #btn-sort { border: 1px solid var(--border); margin-left: auto; padding: 2px 8px; }
   #main { position: relative; }
   #chart { position: absolute; inset: 0; }
   #right { background: var(--panel); border-left: 1px solid var(--border); overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 12px; }
@@ -139,6 +143,10 @@
   <aside>
     <input id="search" placeholder="Szukaj pary… (np. fun)">
     <div style="padding:0 12px" class="muted"><label><input type="checkbox" id="only-fav"> tylko obserwowane ★</label></div>
+    <div id="list-opts" class="muted">
+      <label title="pokaż też pary z wolumenem poniżej 200 tys. $"><input type="checkbox" id="show-all"> pokaż wszystkie</label>
+      <button class="tool-btn" id="btn-sort" title="kolejność listy">Wolumen ↓</button>
+    </div>
     <div id="symbol-list"></div>
   </aside>
   <div id="main">
@@ -208,6 +216,7 @@
 const SUPABASE_URL = "https://eogynuiretqkaesnrmnp.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVvZ3ludWlyZXRxa2Flc25ybW5wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5NzkyNzAsImV4cCI6MjA5NTU1NTI3MH0.6uELEUTb7FkpHpZhYnvKLcZAG0xV_cTraoFlFxr1uyc";
 const DEFAULT_FEE_PCT = 0.2;  // spot HTX taker; zmien w Ustawieniach
+const PROG_WOLUMENU = 200000; // $ dziennego wolumenu - pary ponizej domyslnie ukryte na liscie
 
 
 // Wskazniki wlasne (faza 2 startuje tutaj): baza wolumenu, Ichimoku, Fibo.
@@ -344,16 +353,47 @@ async function fetchSignals(symbol) {
   return rest(`signals?symbol=eq.${symbol}&select=ts,kind,strength,detail&order=ts.asc&limit=1000`);
 }
 
+// cena z momentu sygnalu wyciagana z detail (jsonb) - bywa obiektem albo
+// JSON-em zapisanym jako tekst (starsze wiersze). Brak ceny => null (nie zgadujemy).
+function signalPrice(detail) {
+  let d = detail;
+  if (typeof d === "string") { try { d = JSON.parse(d); } catch (_e) { return null; } }
+  if (!d || typeof d !== "object") return null;
+  // "low" to cena z chwili sygnalu (dolek flush/zniesienia); "prev_close" awaryjnie
+  for (const k of ["price", "close", "px", "low", "prev_close"]) {
+    const v = Number(d[k]);
+    if (Number.isFinite(v) && v > 0) return v;
+  }
+  return null;
+}
+
 // sygnaly LIVE (od startu systemu 2026-08-11) + wyniki z trackera
 async function fetchLiveSignals() {
   const sigs = await rest(
     `signals?ts=gte.2026-08-11T00:00:00Z&kind=not.in.(awake,grupa_a)` +
-    `&select=id,ts,symbol,kind,strength&order=ts.desc&limit=500`);
+    `&select=id,ts,symbol,kind,strength,detail&order=ts.desc&limit=500`);
   if (!sigs.length) return [];
   const ids = sigs.map((s) => s.id).join(",");
   const rev = await rest(`signal_review?signal_id=in.(${ids})&select=signal_id,ret_now_pct,mfe_pct,mae_pct,outcome`);
   const byId = new Map(rev.map((r) => [r.signal_id, r]));
   return sigs.map((s) => ({ ...s, review: byId.get(s.id) || null }));
+}
+
+// dzienny wolumen wszystkich par: swiece 1day z ostatnich 2 dob,
+// bierzemy najnowszy wiersz per symbol (close = awaryjna cena dla listy)
+async function fetchDailyVolumes() {
+  const since = new Date(Date.now() - 2 * 86400 * 1000).toISOString();
+  const rows = [];
+  for (let off = 0; off < 6000; off += 1000) {
+    const page = await rest(
+      `candles?interval=eq.1day&ts=gte.${since}` +
+      `&select=symbol,ts,vol,close&order=ts.desc&limit=1000&offset=${off}`);
+    rows.push(...page);
+    if (page.length < 1000) break;
+  }
+  const out = new Map();
+  for (const r of rows) if (!out.has(r.symbol)) out.set(r.symbol, { vol: +r.vol, close: +r.close });
+  return out;
 }
 
 async function fetchDelistings(symbol) {
@@ -501,6 +541,7 @@ const HTX_PERIOD = { "15min": "15min", "60min": "60min", "4hour": "4hour", "1day
 // z podgladem za kursorem: 1. klik = kotwica, ruch = podglad, 2. klik = utrwalenie.
 
 
+
 const KIND_MARK = {
   flush:               { color: "#26a69a", shape: "arrowUp",   text: "OKAZJA" },
   retrace_opportunity: { color: "#2962ff", shape: "arrowUp",   text: "BUDUJ" },
@@ -556,6 +597,36 @@ class CloudPrimitive {
             else seg.push(q);
           }
           flush();
+        }),
+      }),
+    }];
+  }
+}
+
+// Kropki cenowe sygnalow: mala wypelniona kropka dokladnie na (time, price)
+// z chwili sygnalu - uzupelnia marker przy swiecy (ten pokazuje tylko dzien).
+class SignalDotsPrimitive {
+  constructor(chart, series, getDots) { this._c = chart; this._s = series; this._get = getDots; }
+  updateAllViews() {}
+  paneViews() {
+    return [{
+      renderer: () => ({
+        draw: (target) => target.useMediaCoordinateSpace(({ context: ctx }) => {
+          const dots = this._get() || [];
+          if (!dots.length) return;
+          const ts = this._c.timeScale();
+          for (const d of dots) {
+            const x = ts.timeToCoordinate(d.time);
+            const y = this._s.priceToCoordinate(d.price);
+            if (x === null || y === null) continue;
+            ctx.beginPath();
+            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = d.color;
+            ctx.fill();
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = "rgba(0,0,0,0.85)";  // ciemny obrys - widoczna na obu motywach
+            ctx.stroke();
+          }
         }),
       }),
     }];
@@ -659,27 +730,38 @@ class ChmuraChart {
 
     this.tool = new ToolPrimitive(this.chart, this.candles, () => this.data);
     this.candles.attachPrimitive(this.tool);
+    this._sigDots = [];
+    this._dotsPrim = new SignalDotsPrimitive(this.chart, this.candles, () => this._sigDots);
+    this.candles.attachPrimitive(this._dotsPrim);
     // narzedzia rysowane PRZECIAGNIECIEM (palcem/myszka), jak na TradingView
     this._dragging = false;
+    this._capturedId = null;
     el.addEventListener("pointerdown", (e) => {
-      if (!this.tool.mode) return;
+      if (!this.tool.mode || this._dragging) return;      // drugi palec nie psuje rysowania
+      if (e.button != null && e.button !== 0) return;     // tylko lewy przycisk / palec
       e.preventDefault();
       const tp = this._toTimePrice(e);
       if (!tp) return;
       this._dragging = true;
-      el.setPointerCapture?.(e.pointerId);
+      this._setPan(false);                                // pan na pewno wylaczony w trakcie
+      // capture: pointerup/move trafiaja do nas nawet gdy palec zjedzie z wykresu
+      try { el.setPointerCapture(e.pointerId); this._capturedId = e.pointerId; }
+      catch (_e) { this._capturedId = null; }
       this.tool.p1 = tp; this.tool.p2 = null; this.tool.preview = tp;
-      this.tool.refresh();
+      this.tool.refresh();                                // podglad widoczny od razu
     }, { passive: false });
     el.addEventListener("pointermove", (e) => {
       if (!this._dragging) return;
+      if (this._capturedId != null && e.pointerId !== this._capturedId) return;
       e.preventDefault();
       const tp = this._toTimePrice(e);
       if (tp) { this.tool.preview = tp; this.tool.refresh(); }
     }, { passive: false });
     const finish = (e) => {
       if (!this._dragging) return;
+      if (this._capturedId != null && e.pointerId !== this._capturedId) return;
       this._dragging = false;
+      this._releaseCapture();
       const tp = this._toTimePrice(e) ?? this.tool.preview;
       this.tool.p2 = tp;
       this.tool.mode = null;          // rysunek zostaje, wykres znow reaguje na pan/zoom
@@ -689,6 +771,12 @@ class ChmuraChart {
     };
     el.addEventListener("pointerup", finish, { passive: false });
     el.addEventListener("pointercancel", finish, { passive: false });
+  }
+
+  _releaseCapture() {
+    if (this._capturedId == null) return;
+    try { this.el.releasePointerCapture(this._capturedId); } catch (_e) { /* juz zwolnione */ }
+    this._capturedId = null;
   }
 
   _toTimePrice(e) {
@@ -703,6 +791,8 @@ class ChmuraChart {
   }
 
   _setPan(on) {
+    // pan/zoom nie moze sie wlaczyc w POLOWIE przeciagania ani gdy narzedzie uzbrojone
+    if (on && (this._dragging || this.tool?.mode)) return;
     this.chart.applyOptions({ handleScroll: on, handleScale: on });
     this.el.style.touchAction = on ? "auto" : "none";
   }
@@ -735,7 +825,7 @@ class ChmuraChart {
   // znaczniki na KAZDYM interwale: sygnal (doba HTX) przyciagany do pierwszej
   // swiecy danego dnia, delisting do najblizszej swiecy
   setMarkersAll(signals, delistings) {
-    if (!this.data.length) { this.candles.setMarkers([]); return; }
+    if (!this.data.length) { this.candles.setMarkers([]); this._sigDots = []; return; }
     const times = this.data.map((r) => r.time);
     const snap = (t) => {
       let lo = 0, hi = times.length - 1, ans = null;
@@ -747,6 +837,7 @@ class ChmuraChart {
       return times[times.length - 1] >= t - 86400 ? null : null;
     };
     const marks = [];
+    const dots = [];
     for (const s of signals) {
       const mk = KIND_MARK[s.kind];
       if (!mk) continue;
@@ -754,7 +845,11 @@ class ChmuraChart {
       if (t === null) continue;
       marks.push({ time: t, position: mk.shape === "arrowDown" ? "aboveBar" : "belowBar",
                    color: mk.color, shape: mk.shape, text: mk.text });
+      // kropka DOKLADNIE na cenie sygnalu - tylko gdy detail ma cene
+      const px = signalPrice(s.detail);
+      if (px != null) dots.push({ time: t, price: px, color: mk.color });
     }
+    this._sigDots = dots;
     for (const d of delistings || []) {
       const t = snap(Math.floor(Date.parse(d.published_at || d.seen_at) / 1000));
       if (t !== null) marks.push({ time: t, position: "aboveBar", color: "#ff1744",
@@ -821,6 +916,7 @@ class ChmuraChart {
   clearTool() {
     this.tool.mode = null; this.tool.p1 = null; this.tool.p2 = null; this.tool.preview = null;
     this._dragging = false;
+    this._releaseCapture();
     this._setPan(true);
     this.tool.refresh();
     this.el.style.cursor = "default";
@@ -947,13 +1043,24 @@ class OrderBook {
 // Sklejenie aplikacji: lista par, wykres live, arkusz, kalkulator, sygnaly.
 
 
+
 const fmtUsd = (v) => v == null ? "—" : Math.round(v).toLocaleString("pl-PL") + " $";
+const fmtPx = (v) => v == null ? "—" : (v >= 1 ? v.toFixed(4) : v.toPrecision(5));
+// wolumen krotko, po polsku: 217 tys. $ / 1,3 mln $ / 2,1 mld $
+const fmtVolPl = (v) => {
+  if (v == null || !Number.isFinite(v)) return "—";
+  if (v >= 1e9) return (v / 1e9).toFixed(1).replace(".", ",") + " mld $";
+  if (v >= 1e6) return (v / 1e6).toFixed(1).replace(".", ",") + " mln $";
+  if (v >= 1e3) return Math.round(v / 1e3) + " tys. $";
+  return Math.round(v) + " $";
+};
 
 
 
 
 const $ = (id) => document.getElementById(id);
-const state = { symbol: "funusdt", interval: "1day", symbols: [], fav: new Set(), signals: [] };
+const state = { symbol: "funusdt", interval: "1day", symbols: [], fav: new Set(), signals: [],
+                vols: new Map(), lastPx: {}, sort: "vol-desc" };
 
 const chart = new ChmuraChart($("chart"));
 const book = new OrderBook($("book"), {
@@ -989,14 +1096,33 @@ function renderInfoBar() {
     `<span>Kapitalizacja: <b>${fmtUsd(i.mcap)}</b></span>`;
 }
 
+// tytul karty: "RAD 0.2345 | Chmura" - maks. raz na sekunde
+let _titleTs = 0;
+function setDocTitle(px, force = false) {
+  const now = Date.now();
+  if (!force && now - _titleTs < 1000) return;
+  const name = state.symbol.toUpperCase().replace(/USDT$/, "");
+  document.title = px != null ? `${name} ${fmtPx(px)} | Chmura` : `${name} | Chmura`;
+  _titleTs = px != null ? now : 0;   // tytul bez ceny nie blokuje najblizszej aktualizacji
+}
+
+let _rowPxTs = 0;
 function setHeaderPrice(px) {
-  $("h-px").textContent = px >= 1 ? px.toFixed(4) : px.toPrecision(5);
+  state.lastPx[state.symbol] = px;
+  $("h-px").textContent = fmtPx(px);
   const first = chart.data[Math.max(0, chart.data.length - 2)];
   if (first) {
     const chg = (px / first.close - 1) * 100;
     const el = $("h-chg");
     el.textContent = `${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%`;
     el.className = `chg ${chg >= 0 ? "up" : "down"}`;
+  }
+  setDocTitle(px);
+  const now = Date.now();
+  if (now - _rowPxTs >= 1000) {       // cena live takze w wierszu listy (maks. 1/s)
+    _rowPxTs = now;
+    const cell = document.querySelector(`[data-px="${state.symbol}"]`);
+    if (cell) cell.textContent = fmtPx(px);
   }
 }
 
@@ -1005,6 +1131,7 @@ async function loadSymbol(sym) {
   $("right").classList.remove("open");
   state.symbol = sym;
   $("h-sym").textContent = sym.toUpperCase().replace(/USDT$/, "/USDT");
+  setDocTitle(state.lastPx[sym] ?? state.vols.get(sym)?.close ?? null, true);  // tytul od razu po zmianie coina
   document.querySelectorAll(".sym-row").forEach((r) => r.classList.toggle("active", r.dataset.sym === sym));
   const rows = await fetchCandles(sym, state.interval);
   chart.setData(rows);
@@ -1029,21 +1156,46 @@ function renderSignalsPanel() {
   const KIND = { flush: "OKAZJA?", retrace_opportunity: "BUDUJ POZYCJE?", exit: "WYCHODZ", wave: "FALA", awake: "BUDZI SIE", grupa_a: "CICHA AKUM.", grupa_b: "SCHEMAT GRUPY?", grupa_c: "KLIMAKS DYSTR." };
   const last = [...state.signals].reverse().slice(0, 15);
   $("sig-list").innerHTML = last.length
-    ? last.map((s) => `<div class="sig"><b>${KIND[s.kind] ?? s.kind}</b> <span class="muted">${plDate(s.ts)}</span> siła ${s.strength}</div>`).join("")
+    ? last.map((s) => {
+        const px = signalPrice(s.detail);
+        return `<div class="sig"><b>${KIND[s.kind] ?? s.kind}</b> <span class="muted">${plDate(s.ts)}</span> ${px != null ? fmtPx(px) : "—"}</div>`;
+      }).join("")
     : "Brak sygnałów.";
 }
 
 function renderList() {
   const q = $("search").value.trim().toLowerCase();
   const onlyFav = $("only-fav").checked;
-  const items = state.symbols
-    .filter((s) => (!q || s.symbol.includes(q)) && (!onlyFav || state.fav.has(s.symbol)))
-    .slice(0, 400);
-  $("symbol-list").innerHTML = items.map((s) => `
+  const showAll = $("show-all").checked;
+  const volsReady = state.vols.size > 0;
+  const volOf = (sym) => state.vols.get(sym)?.vol ?? 0;
+  let items = state.symbols
+    .filter((s) => (!q || s.symbol.includes(q)) && (!onlyFav || state.fav.has(s.symbol)));
+  // domyslnie chowamy male wolumeny; ★ zawsze widoczne; wracaja same gdy wolumen > prog
+  if (volsReady && !showAll)
+    items = items.filter((s) => state.fav.has(s.symbol) || volOf(s.symbol) >= PROG_WOLUMENU);
+  if (state.sort === "alpha") items.sort((a, b) => a.symbol.localeCompare(b.symbol));
+  else if (volsReady) items.sort((a, b) => state.sort === "vol-asc"
+    ? volOf(a.symbol) - volOf(b.symbol) : volOf(b.symbol) - volOf(a.symbol));
+  items = items.slice(0, 400);
+  $("symbol-list").innerHTML = items.map((s) => {
+    const v = state.vols.get(s.symbol);
+    const px = state.lastPx[s.symbol] ?? v?.close;
+    return `
     <div class="sym-row ${s.symbol === state.symbol ? "active" : ""}" data-sym="${s.symbol}">
       <span>${s.symbol.toUpperCase().replace(/USDT$/, "")}</span>
+      <span class="sym-meta"><span data-px="${s.symbol}">${px != null && Number.isFinite(px) ? fmtPx(px) : "—"}</span> · ${fmtVolPl(v?.vol)}</span>
       <span class="star ${state.fav.has(s.symbol) ? "fav" : ""}" data-star="${s.symbol}">★</span>
-    </div>`).join("");
+    </div>`;
+  }).join("");
+}
+
+// dzienny wolumen dla listy - odswiezany co 5 minut
+async function loadVolumes() {
+  try {
+    state.vols = await fetchDailyVolumes();
+    renderList();
+  } catch (_e) { /* chwilowy brak sieci - lista zostaje jak byla */ }
 }
 
 $("symbol-list").addEventListener("click", async (e) => {
@@ -1060,6 +1212,14 @@ $("symbol-list").addEventListener("click", async (e) => {
 });
 $("search").addEventListener("input", renderList);
 $("only-fav").addEventListener("change", renderList);
+$("show-all").addEventListener("change", renderList);
+const SORT_LABEL = { "vol-desc": "Wolumen ↓", "vol-asc": "Wolumen ↑", "alpha": "A–Z" };
+$("btn-sort").addEventListener("click", () => {
+  const order = ["vol-desc", "vol-asc", "alpha"];
+  state.sort = order[(order.indexOf(state.sort) + 1) % order.length];
+  $("btn-sort").textContent = SORT_LABEL[state.sort];
+  renderList();
+});
 function chooseInterval(iv) {
   state.interval = iv;
   document.querySelectorAll(".iv-btn, #iv-mobile button").forEach((x) =>
@@ -1105,11 +1265,12 @@ $("btn-signals").addEventListener("click", async () => {
     const r = s.review;
     const col = r && r.ret_now_pct != null ? (r.ret_now_pct >= 0 ? "#26a69a" : "#ef5350") : "#787b86";
     const oc = r?.outcome === "profit" ? " ✅+20%" : r?.outcome === "stop" ? " ⛔-20%" : "";
+    const px = signalPrice(s.detail);
     return `<tr data-goto="${s.symbol}" style="cursor:pointer;border-bottom:1px solid #2a2e3955">
       <td style="padding:4px 8px">${plDate(s.ts)}</td>
       <td style="padding:4px 8px"><b>${s.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
       <td style="padding:4px 8px">${KIND_PL[s.kind] ?? s.kind}</td>
-      <td style="padding:4px 8px">${s.strength}</td>
+      <td style="padding:4px 8px">${px != null ? fmtPx(px) : "—"}</td>
       <td style="padding:4px 8px;color:${col}">${fmt(r?.ret_now_pct)}${oc}</td>
       <td style="padding:4px 8px" class="muted">${fmt(r?.mfe_pct)} / ${fmt(r?.mae_pct)}</td>
     </tr>`;
@@ -1117,7 +1278,7 @@ $("btn-signals").addEventListener("click", async () => {
   openModal(`Sygnały systemu — od startu 11.08 (${sigs.length})`,
     `<table style="width:100%;border-collapse:collapse;font-size:12px">
       <tr class="muted"><th style="text-align:left;padding:4px 8px">data</th><th style="text-align:left;padding:4px 8px">coin</th>
-      <th style="text-align:left;padding:4px 8px">sygnał</th><th style="text-align:left;padding:4px 8px">siła</th>
+      <th style="text-align:left;padding:4px 8px">sygnał</th><th style="text-align:left;padding:4px 8px">cena sygnału</th>
       <th style="text-align:left;padding:4px 8px">wynik teraz</th><th style="text-align:left;padding:4px 8px">max / min</th></tr>${rows}</table>
     <p class="muted" style="margin-top:8px">Klik w wiersz = wykres coina. Wyniki liczone od ceny sygnału (tracker, odświeżany co dobę i po komendzie "raport").</p>`);
 });
@@ -1226,6 +1387,8 @@ $("main").addEventListener("click", () => {
   state.symbols = await fetchSymbols();
   state.fav = await fetchWatchlist();
   renderList();
+  loadVolumes();                              // ceny + wolumen na liscie (bez blokowania startu)
+  setInterval(loadVolumes, 5 * 60 * 1000);    // odswiezanie co 5 minut
   await loadSymbol(state.symbol);
 })();
 
