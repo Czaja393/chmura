@@ -63,11 +63,20 @@
   .muted { color: var(--muted); }
   .only-mobile { display: none; }
 
+  #main { position: relative; }
+  #rys-bar { position: absolute; left: 6px; top: 46px; z-index: 21; display: flex; flex-direction: column;
+    gap: 2px; background: var(--panel); border: 1px solid #2a2e39; border-radius: 8px; padding: 4px 3px; }
+  #rys-bar button { background: none; border: none; color: var(--muted); font-size: 15px; line-height: 1;
+    width: 30px; height: 28px; border-radius: 5px; cursor: pointer; }
+  #rys-bar button:hover { background: #2a2e39; color: var(--fg); }
+  #rys-bar button.active { background: var(--accent); color: #fff; }
+  .rys-sep { height: 1px; background: #2a2e39; margin: 3px 2px; }
   #iv-mobile { display: none; }
 
   /* ===== MOBILE: jedna kolumna, wykres caly ekran, szuflady ===== */
   @media (max-width: 860px) {
     .iv-btn { display: none; }              /* interwaly przenosza sie na wykres */
+    #rys-bar { display: none; }
     #iv-mobile { display: flex; position: absolute; top: 10px; left: 10px; z-index: 20;
       gap: 6px; background: #1e222dd9; border: 1px solid var(--border);
       border-radius: 8px; padding: 4px; }
@@ -150,6 +159,17 @@
     <div id="symbol-list"></div>
   </aside>
   <div id="main">
+    <div id="rys-bar">
+      <button data-tool="trend"   title="Linia trendu - przeciągnij">╱</button>
+      <button data-tool="hline"   title="Linia pozioma - kliknij">━</button>
+      <button data-tool="channel" title="Kanał równoległy - przeciągnij, potem kliknij szerokość">▤</button>
+      <button data-tool="rect"    title="Prostokąt - przeciągnij">▭</button>
+      <button data-tool="ruler"   title="Miarka % - przeciągnij">📏</button>
+      <button data-tool="fibo2"   title="Fibo 2 punkty - przeciągnij od dołka do szczytu">ƒ</button>
+      <span class="rys-sep"></span>
+      <button id="btn-undo"  title="Cofnij ostatni rysunek">↶</button>
+      <button id="btn-erase" title="Wyczyść wszystkie rysunki">🗑</button>
+    </div>
     <div id="chart"></div>
     <div id="iv-mobile">
       <button data-iv="15min">15m</button>
@@ -159,6 +179,10 @@
       <span style="width:1px;background:#2a2e39;margin:2px 2px"></span>
       <button data-tool="ruler" title="miarka: przeciągnij po wykresie">📏</button>
       <button data-tool="fibo2" title="Fibo: przeciągnij od dołka do szczytu">ƒ</button>
+      <button data-tool="trend" title="linia trendu">╱</button>
+      <button data-tool="hline" title="linia pozioma">━</button>
+      <button data-tool="channel" title="kanał równoległy">▤</button>
+      <button id="btn-undo-m" title="cofnij rysunek">↶</button>
     </div>
   </div>
   <div id="right">
@@ -380,33 +404,16 @@ async function fetchLiveSignals() {
   return sigs.map((s) => ({ ...s, review: byId.get(s.id) || null }));
 }
 
-// Wolumen 24h wszystkich par PROSTO Z HTX - to samo zrodlo co pasek nad wykresem,
-// wiec liczby sie zgadzaja. (Swieca dzienna pokazywala tylko czesc doby, bo doba
-// gieldy konczy sie o 16:00 UTC - stad wczesniejsza rozbieznosc.)
+// Wolumen 24h wszystkich par - widok `vol24` w bazie (kroczace 24h ze swiec
+// godzinowych). Swieca dzienna pokazywala tylko czesc doby, bo doba gieldy konczy
+// sie o 16:00 UTC - stad wczesniejsza rozbieznosc z paskiem nad wykresem.
 async function fetchDailyVolumes() {
-  try {
-    const r = await fetch("https://api.huobi.pro/market/tickers");
-    const d = await r.json();
-    if (d.status === "ok" && Array.isArray(d.data)) {
-      const out = new Map();
-      for (const t of d.data) {
-        if (!String(t.symbol).endsWith("usdt")) continue;
-        out.set(t.symbol, { vol: +t.vol, close: +t.close });   // vol = obrot 24h w USDT
-      }
-      if (out.size) return out;
-    }
-  } catch (_e) { /* brak dostepu do HTX - schodzimy do swiec z bazy */ }
-  const since = new Date(Date.now() - 2 * 86400 * 1000).toISOString();
-  const rows = [];
-  for (let off = 0; off < 6000; off += 1000) {
-    const page = await rest(
-      `candles?interval=eq.1day&ts=gte.${since}` +
-      `&select=symbol,ts,vol,close&order=ts.desc&limit=1000&offset=${off}`);
-    rows.push(...page);
+  const out = new Map();
+  for (let off = 0; off < 4000; off += 1000) {
+    const page = await rest(`vol24?select=symbol,vol24,close&limit=1000&offset=${off}`);
+    for (const r of page) out.set(r.symbol, { vol: +r.vol24, close: +r.close });
     if (page.length < 1000) break;
   }
-  const out = new Map();
-  for (const r of rows) if (!out.has(r.symbol)) out.set(r.symbol, { vol: +r.vol, close: +r.close });
   return out;
 }
 
@@ -652,30 +659,86 @@ class SignalDotsPrimitive {
 class ToolPrimitive {
   constructor(chart, series, dataRef) {
     this._c = chart; this._s = series; this._data = dataRef;
-    this.mode = null;    // 'ruler' | 'fibo2'
-    this.p1 = null; this.p2 = null; this.preview = null;
+    this.mode = null;       // rysowane teraz: ruler|fibo2|trend|hline|channel|rect
+    this.p1 = null; this.preview = null;
+    this.pending = null;    // kanal czeka na 3. punkt (szerokosc)
+    this.drawings = [];     // gotowe rysunki - zostaja na wykresie
     this._ru = null;
   }
   attached(param) { this._ru = param.requestUpdate; }
   refresh() { if (this._ru) this._ru(); }
   updateAllViews() {}
+
+  _xy(pt) {
+    if (!pt) return null;
+    const x = this._c.timeScale().timeToCoordinate(pt.time);
+    const y = this._s.priceToCoordinate(pt.price);
+    return (x === null || y === null) ? null : { x, y };
+  }
+
   paneViews() {
     return [{
       renderer: () => ({
         draw: (target) => target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
-          const a = this.p1, b = this.p2 ?? this.preview;
-          if (!a || !b) return;
-          if (!this.mode && !this.p2) return;   // rysuj w trakcie LUB gdy skonczone
-          this._lastMode = this.mode ?? this._lastMode;
-          const ts = this._c.timeScale();
-          const x1 = ts.timeToCoordinate(a.time), y1 = this._s.priceToCoordinate(a.price);
-          const x2 = ts.timeToCoordinate(b.time), y2 = this._s.priceToCoordinate(b.price);
-          if ([x1, y1, x2, y2].some((v) => v === null)) return;
-          if ((this.mode ?? this._lastMode) === "ruler") this._ruler(ctx, x1, y1, x2, y2, a, b);
-          else this._fibo(ctx, x1, x2, a, b, mediaSize);
+          for (const d of this.drawings) this._one(ctx, d, mediaSize);
+          if (this.pending) this._one(ctx, { ...this.pending, c: this.preview }, mediaSize, true);
+          else if (this.mode && this.p1) {
+            this._one(ctx, { type: this.mode, a: this.p1, b: this.preview }, mediaSize, true);
+          }
         }),
       }),
     }];
+  }
+
+  _one(ctx, d, mediaSize, podglad = false) {
+    const A = this._xy(d.a);
+    if (!A) return;
+    const B = d.b ? this._xy(d.b) : null;
+    ctx.save();
+    if (podglad) ctx.globalAlpha = 0.85;
+    if (d.type === "hline") this._hline(ctx, d, A, mediaSize);
+    else if (B) {
+      if (d.type === "ruler") this._ruler(ctx, A.x, A.y, B.x, B.y, d.a, d.b);
+      else if (d.type === "fibo2") this._fibo(ctx, A.x, B.x, d.a, d.b, mediaSize);
+      else if (d.type === "trend") this._trend(ctx, A, B);
+      else if (d.type === "rect") this._rect(ctx, A, B);
+      else if (d.type === "channel") this._channel(ctx, d, A, B);
+    }
+    ctx.restore();
+  }
+
+  _hline(ctx, d, A, mediaSize) {
+    const w = mediaSize?.width ?? 9999;
+    ctx.strokeStyle = "#90a4ae"; ctx.lineWidth = 1.2;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.moveTo(0, A.y); ctx.lineTo(w, A.y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = "11px Segoe UI"; ctx.fillStyle = "#90a4ae";
+    ctx.fillText(fp(d.a.price), 6, A.y - 4);
+  }
+  _trend(ctx, A, B) {
+    ctx.strokeStyle = "#42a5f5"; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+  }
+  _rect(ctx, A, B) {
+    const x = Math.min(A.x, B.x), y = Math.min(A.y, B.y);
+    const w = Math.abs(B.x - A.x) || 2, h = Math.abs(B.y - A.y) || 2;
+    ctx.fillStyle = "rgba(66,165,245,0.12)"; ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = "#42a5f5"; ctx.lineWidth = 1.2; ctx.strokeRect(x, y, w, h);
+  }
+  _channel(ctx, d, A, B) {
+    ctx.strokeStyle = "#ab47bc"; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+    const C = d.c ? this._xy(d.c) : null;
+    if (!C) return;
+    const t = (B.x - A.x) === 0 ? 0 : (C.x - A.x) / (B.x - A.x);
+    const dy = C.y - (A.y + t * (B.y - A.y));   // rownolegle przesuniecie pionowe
+    ctx.beginPath(); ctx.moveTo(A.x, A.y + dy); ctx.lineTo(B.x, B.y + dy); ctx.stroke();
+    ctx.fillStyle = "rgba(171,71,188,0.10)";
+    ctx.beginPath();
+    ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y);
+    ctx.lineTo(B.x, B.y + dy); ctx.lineTo(A.x, A.y + dy);
+    ctx.closePath(); ctx.fill();
   }
   _ruler(ctx, x1, y1, x2, y2, a, b) {
     const up = b.price >= a.price;
@@ -762,7 +825,15 @@ class ChmuraChart {
       // capture: pointerup/move trafiaja do nas nawet gdy palec zjedzie z wykresu
       try { el.setPointerCapture(e.pointerId); this._capturedId = e.pointerId; }
       catch (_e) { this._capturedId = null; }
-      this.tool.p1 = tp; this.tool.p2 = null; this.tool.preview = tp;
+      if (this.tool.pending) {              // kanal: trzeci punkt ustawia szerokosc
+        this.tool.drawings.push({ ...this.tool.pending, c: tp });
+        this.tool.pending = null; this.tool.mode = null; this.tool.p1 = null;
+        this._dragging = false; this._releaseCapture(); this._setPan(true);
+        this.el.style.cursor = "default";
+        this._saveDrawings(); this.tool.refresh();
+        return;
+      }
+      this.tool.p1 = tp; this.tool.preview = tp;
       this.tool.refresh();                                // podglad widoczny od razu
     }, { passive: false });
     el.addEventListener("pointermove", (e) => {
@@ -778,11 +849,21 @@ class ChmuraChart {
       this._dragging = false;
       this._releaseCapture();
       const tp = this._toTimePrice(e) ?? this.tool.preview;
-      this.tool.p2 = tp;
-      this.tool.mode = null;          // rysunek zostaje, wykres znow reaguje na pan/zoom
+      const t = this.tool, a = t.p1;
+      if (t.mode === "hline" && a) {
+        t.drawings.push({ type: "hline", a });
+      } else if (t.mode === "channel" && a && tp) {
+        t.pending = { type: "channel", a, b: tp };   // czekamy na klik z szerokoscia
+        t.p1 = null; t.refresh();
+        return;
+      } else if (a && tp) {
+        t.drawings.push({ type: t.mode, a, b: tp });
+      }
+      t.mode = null; t.p1 = null; t.preview = null;   // rysunek zostaje na wykresie
       this._setPan(true);
       this.el.style.cursor = "default";
-      this.tool.refresh();
+      this._saveDrawings();
+      t.refresh();
     };
     el.addEventListener("pointerup", finish, { passive: false });
     el.addEventListener("pointercancel", finish, { passive: false });
@@ -922,19 +1003,41 @@ class ChmuraChart {
 
   // --- narzedzia (przeciaganie) ---
   armTool(mode) {
-    if (this.tool.mode === mode && !this.tool.p2) { this.clearTool(); return; } // drugi klik = wylacz
+    if (this.tool.mode === mode) { this.clearTool(); return; }   // drugi klik = rozbroj
     this.clearTool();
     this.tool.mode = mode;
     this._setPan(false);                 // na czas rysowania wykres nie panuje
     this.el.style.cursor = "crosshair";
   }
+  // rozbraja narzedzie, ale ZOSTAWIA narysowane obiekty na wykresie
   clearTool() {
-    this.tool.mode = null; this.tool.p1 = null; this.tool.p2 = null; this.tool.preview = null;
+    this.tool.mode = null; this.tool.p1 = null; this.tool.preview = null; this.tool.pending = null;
     this._dragging = false;
     this._releaseCapture();
     this._setPan(true);
     this.tool.refresh();
     this.el.style.cursor = "default";
+  }
+  // gumka: bez argumentu cofa ostatni rysunek, z true czysci wszystkie
+  eraseTool(wszystko = false) {
+    if (wszystko) this.tool.drawings = [];
+    else this.tool.drawings.pop();
+    this.clearTool();
+    this._saveDrawings();
+  }
+  // rysunki zapisywane per para i interwal - wracaja po odswiezeniu strony
+  setDrawKey(symbol, interval) {
+    this._drawKey = `chmura.rys.${symbol}.${interval}`;
+    try {
+      const raw = localStorage.getItem(this._drawKey);
+      this.tool.drawings = raw ? JSON.parse(raw) : [];
+    } catch (_e) { this.tool.drawings = []; }
+    this.tool.refresh();
+  }
+  _saveDrawings() {
+    if (!this._drawKey) return;
+    try { localStorage.setItem(this._drawKey, JSON.stringify(this.tool.drawings.slice(-60))); }
+    catch (_e) { /* brak miejsca - rysunki zostaja tylko na ekranie */ }
   }
 }
 
@@ -1149,6 +1252,7 @@ async function loadSymbol(sym) {
   setDocTitle(state.lastPx[sym] ?? state.vols.get(sym)?.close ?? null, true);  // tytul od razu po zmianie coina
   document.querySelectorAll(".sym-row").forEach((r) => r.classList.toggle("active", r.dataset.sym === sym));
   const rows = await fetchCandles(sym, state.interval);
+  chart.setDrawKey(sym, state.interval);     // rysunki tej pary i interwalu wracaja
   chart.setData(rows);
   if (rows.length) setHeaderPrice(rows[rows.length - 1].close);
   state.signals = await fetchSignals(sym);
@@ -1243,14 +1347,27 @@ function chooseInterval(iv) {
 }
 document.querySelectorAll(".iv-btn, #iv-mobile button[data-iv]").forEach((b) =>
   b.addEventListener("click", (e) => { e.stopPropagation(); chooseInterval(b.dataset.iv); }));
-document.querySelectorAll("#iv-mobile button[data-tool]").forEach((b) =>
-  b.addEventListener("click", (e) => { e.stopPropagation(); chart.armTool(b.dataset.tool); }));
+document.querySelectorAll("#iv-mobile button[data-tool], #rys-bar button[data-tool]").forEach((b) =>
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    chart.armTool(b.dataset.tool);
+    // podswietl uzbrojone narzedzie (widac, czym rysujesz)
+    document.querySelectorAll("[data-tool]").forEach((x) =>
+      x.classList.toggle("active", x.dataset.tool === chart.tool.mode));
+  }));
+const odswiezPasek = () => document.querySelectorAll("[data-tool]").forEach((x) => x.classList.remove("active"));
+$("btn-undo").addEventListener("click", () => { chart.eraseTool(false); odswiezPasek(); });
+$("btn-erase").addEventListener("click", () => { chart.eraseTool(true); odswiezPasek(); });
+$("btn-undo-m").addEventListener("click", (e) => { e.stopPropagation(); chart.eraseTool(false); odswiezPasek(); });
 $("btn-refresh").addEventListener("click", () => loadSymbol(state.symbol));
 $("btn-ichimoku").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleIchimoku()));
 $("btn-fibo").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleFibo()));
 $("btn-fibo2").addEventListener("click", () => chart.armTool("fibo2"));
 $("btn-ruler").addEventListener("click", () => chart.armTool("ruler"));
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") chart.clearTool(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { chart.clearTool(); odswiezPasek(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === "z") { chart.eraseTool(false); odswiezPasek(); }
+});
 $("btn-ma").addEventListener("click", () => {
   const m = $("ma-menu");
   m.style.display = m.style.display === "none" ? "block" : "none";
