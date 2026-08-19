@@ -359,8 +359,9 @@ function signalPrice(detail) {
   let d = detail;
   if (typeof d === "string") { try { d = JSON.parse(d); } catch (_e) { return null; } }
   if (!d || typeof d !== "object") return null;
-  // "low" to cena z chwili sygnalu (dolek flush/zniesienia); "prev_close" awaryjnie
-  for (const k of ["price", "close", "px", "low", "prev_close"]) {
+  // "price_sent" = cena w chwili WYSYLKI alertu (to ja widzisz na Telegramie i o niej
+  // myslimy jako o cenie wejscia); dopiero potem cena swiecy sygnalu i awaryjnie reszta
+  for (const k of ["price_sent", "price", "close", "px", "low", "prev_close"]) {
     const v = Number(d[k]);
     if (Number.isFinite(v) && v > 0) return v;
   }
@@ -379,9 +380,22 @@ async function fetchLiveSignals() {
   return sigs.map((s) => ({ ...s, review: byId.get(s.id) || null }));
 }
 
-// dzienny wolumen wszystkich par: swiece 1day z ostatnich 2 dob,
-// bierzemy najnowszy wiersz per symbol (close = awaryjna cena dla listy)
+// Wolumen 24h wszystkich par PROSTO Z HTX - to samo zrodlo co pasek nad wykresem,
+// wiec liczby sie zgadzaja. (Swieca dzienna pokazywala tylko czesc doby, bo doba
+// gieldy konczy sie o 16:00 UTC - stad wczesniejsza rozbieznosc.)
 async function fetchDailyVolumes() {
+  try {
+    const r = await fetch("https://api.huobi.pro/market/tickers");
+    const d = await r.json();
+    if (d.status === "ok" && Array.isArray(d.data)) {
+      const out = new Map();
+      for (const t of d.data) {
+        if (!String(t.symbol).endsWith("usdt")) continue;
+        out.set(t.symbol, { vol: +t.vol, close: +t.close });   // vol = obrot 24h w USDT
+      }
+      if (out.size) return out;
+    }
+  } catch (_e) { /* brak dostepu do HTX - schodzimy do swiec z bazy */ }
   const since = new Date(Date.now() - 2 * 86400 * 1000).toISOString();
   const rows = [];
   for (let off = 0; off < 6000; off += 1000) {
@@ -549,6 +563,7 @@ const KIND_MARK = {
   wave:                { color: "#ff9800", shape: "circle",    text: "FALA" },
   grupa_b:             { color: "#ab47bc", shape: "arrowUp",   text: "GRUPA" },
   grupa_c:             { color: "#8d6e63", shape: "circle",    text: "KLIMAKS" },
+  koniec_fali:         { color: "#ffa726", shape: "arrowDown", text: "FALA ZGASŁA" },
 };
 const MA_DEFS = {
   SMA20:  { fn: sma, n: 20,  color: "#42a5f5" },
