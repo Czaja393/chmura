@@ -103,7 +103,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-</head>
+<script>window.CHMURA_BUILD="19.08-2024";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -1211,7 +1211,8 @@ function renderInfoBar() {
   $("info-bar").innerHTML =
     `<span>Wolumen 24h (HTX): <b>${fmtUsd(i.vol24)}</b></span>` +
     `<span>Norma 30 dni: <b>${fmtUsd(i.base)}</b>${i.vol24 && i.base ? ` <span class="muted">(24h = ${(i.vol24 / i.base).toFixed(1)}× normy)</span>` : ""}</span>` +
-    `<span>Kapitalizacja: <b>${fmtUsd(i.mcap)}</b></span>`;
+    `<span>Kapitalizacja: <b>${fmtUsd(i.mcap)}</b></span>` +
+    `<span class="muted" title="wersja aplikacji - gdy nie zgadza sie po zmianach, odswiez Ctrl+F5">wersja ${window.CHMURA_BUILD ?? "?"}</span>`;
 }
 
 // tytul karty: "RAD 0.2345 | Chmura" - maks. raz na sekunde
