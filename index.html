@@ -103,7 +103,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="19.08-2024";</script></head>
+<script>window.CHMURA_BUILD="19.08-2040";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -571,6 +571,9 @@ const KIND_MARK = {
   grupa_b:             { color: "#ab47bc", shape: "arrowUp",   text: "GRUPA" },
   grupa_c:             { color: "#8d6e63", shape: "circle",    text: "KLIMAKS" },
   koniec_fali:         { color: "#ffa726", shape: "arrowDown", text: "FALA ZGASŁA" },
+  kanal_1day:          { color: "#26c6da", shape: "circle",    text: "KANAŁ" },
+  kanal_4hour:         { color: "#26c6da", shape: "circle",    text: "KANAŁ" },
+  kanal_60min:         { color: "#26c6da", shape: "circle",    text: "KANAŁ" },
 };
 const MA_DEFS = {
   SMA20:  { fn: sma, n: 20,  color: "#42a5f5" },
@@ -680,6 +683,7 @@ class ToolPrimitive {
     return [{
       renderer: () => ({
         draw: (target) => target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+          for (const k of (this.auto ?? [])) this._kanalAuto(ctx, k);
           for (const d of this.drawings) this._one(ctx, d, mediaSize);
           if (this.pending) this._one(ctx, { ...this.pending, c: this.preview }, mediaSize, true);
           else if (this.mode && this.p1) {
@@ -704,6 +708,29 @@ class ToolPrimitive {
       else if (d.type === "rect") this._rect(ctx, A, B);
       else if (d.type === "channel") this._channel(ctx, d, A, B);
     }
+    ctx.restore();
+  }
+
+  // kanal wykryty przez system: pelna linia gdy uklad ma potwierdzona przewage,
+  // przerywana gdy to tylko informacja
+  _kanalAuto(ctx, k) {
+    const ts = this._c.timeScale();
+    const x1 = ts.timeToCoordinate(k.t1), x2 = ts.timeToCoordinate(k.t2);
+    if (x1 === null || x2 === null) return;
+    const yg1 = this._s.priceToCoordinate(k.g1), yg2 = this._s.priceToCoordinate(k.g2);
+    const yd1 = this._s.priceToCoordinate(k.d1), yd2 = this._s.priceToCoordinate(k.d2);
+    if ([yg1, yg2, yd1, yd2].some((v) => v === null)) return;
+    ctx.save();
+    ctx.strokeStyle = k.alert ? "#26c6da" : "rgba(38,198,218,0.45)";
+    ctx.lineWidth = k.alert ? 1.6 : 1.1;
+    if (!k.alert) ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(x1, yg1); ctx.lineTo(x2, yg2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x1, yd1); ctx.lineTo(x2, yd2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = k.alert ? "rgba(38,198,218,0.10)" : "rgba(38,198,218,0.05)";
+    ctx.beginPath();
+    ctx.moveTo(x1, yg1); ctx.lineTo(x2, yg2); ctx.lineTo(x2, yd2); ctx.lineTo(x1, yd1);
+    ctx.closePath(); ctx.fill();
     ctx.restore();
   }
 
@@ -946,6 +973,17 @@ class ChmuraChart {
       if (px != null) dots.push({ time: t, price: px, color: mk.color });
     }
     this._sigDots = dots;
+    // KANALY wykryte przez system - rysowane jako linie, osobno od recznych rysunkow
+    this._auto = [];
+    for (const s of signals) {
+      if (!String(s.kind).startsWith("kanal_")) continue;
+      let d = s.detail;
+      if (typeof d === "string") { try { d = JSON.parse(d); } catch (_e) { continue; } }
+      if (!d || !d.t1 || !d.t2) continue;
+      this._auto.push({ t1: d.t1, t2: d.t2, g1: +d.g1, g2: +d.g2, d1: +d.d1, d2: +d.d2,
+                        kier: d.kier, alert: d.alert });
+    }
+    if (this.tool) this.tool.auto = this._auto;
     for (const d of delistings || []) {
       const t = snap(Math.floor(Date.parse(d.published_at || d.seen_at) / 1000));
       if (t !== null) marks.push({ time: t, position: "aboveBar", color: "#ff1744",
