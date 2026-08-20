@@ -113,7 +113,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-0744";</script></head>
+<script>window.CHMURA_BUILD="20.08-0753";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -724,7 +724,7 @@ class ToolPrimitive {
           this.drawings.forEach((d, idx) => {
             if (idx === this.sel) { ctx.save(); ctx.shadowColor = "#fff"; ctx.shadowBlur = 10; }
             this._one(ctx, d, mediaSize);
-            if (idx === this.sel) ctx.restore();
+            if (idx === this.sel) { ctx.restore(); this._uchwyty(ctx, d); }
           });
           if (this.pending) this._one(ctx, { ...this.pending, c: this.preview }, mediaSize, true);
           else if (this.mode && this.p1) {
@@ -794,6 +794,19 @@ class ToolPrimitive {
     ctx.beginPath();
     ctx.moveTo(x1, yg1); ctx.lineTo(x2, yg2); ctx.lineTo(x2, yd2); ctx.lineTo(x1, yd1);
     ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // uchwyty zaznaczonego rysunku - za nie sie ciagnie, zeby zmienic ksztalt
+  _uchwyty(ctx, d) {
+    const pkt = [d.a, d.b, d.c].filter(Boolean).map((q) => this._xy(q)).filter(Boolean);
+    ctx.save();
+    for (const q of pkt) {
+      ctx.fillStyle = "#fff";
+      ctx.strokeStyle = "#1b2028";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.rect(q.x - 4, q.y - 4, 8, 8); ctx.fill(); ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -907,12 +920,33 @@ class ChmuraChart {
     this._capturedId = null;
     el.addEventListener("pointerdown", (e) => {
       if (!this.tool.mode && !this.tool.pending && this.tool.drawings.length) {
-        // klik w rysunek = zaznaczenie (do usuniecia koszem albo klawiszem Delete)
+        // najpierw: czy lapiemy UCHWYT zaznaczonego rysunku (zmiana ksztaltu)?
+        const u = this._uchwytPod(e);
+        if (u) {
+          this._edycja = u;
+          this._dragging = true;
+          this._setPan(false);
+          try { el.setPointerCapture(e.pointerId); this._capturedId = e.pointerId; } catch (_e) { /* ok */ }
+          e.preventDefault();
+          return;
+        }
+        // klik w rysunek = zaznaczenie; ponowny klik i przeciagniecie = przesuniecie
         const idx = this._trafiony(e);
+        if (idx !== null && idx === this.tool.sel) {
+          const tp = this._toTimePrice(e);
+          if (tp) {
+            this._edycja = { idx, punkt: "calosc", start: tp,
+                             kopia: JSON.parse(JSON.stringify(this.tool.drawings[idx])) };
+            this._dragging = true;
+            this._setPan(false);
+            try { el.setPointerCapture(e.pointerId); this._capturedId = e.pointerId; } catch (_e) { /* ok */ }
+            e.preventDefault();
+            return;
+          }
+        }
         if (idx !== null || this.tool.sel != null) {
           this.tool.sel = idx;
           this.tool.refresh();
-          if (this._onSel) this._onSel(idx !== null);
         }
       }
       if (!this.tool.mode || this._dragging) return;      // drugi palec nie psuje rysowania
@@ -937,6 +971,26 @@ class ChmuraChart {
       this.tool.refresh();                                // podglad widoczny od razu
     }, { passive: false });
     el.addEventListener("pointermove", (e) => {
+      if (this._edycja) {
+        const tp = this._toTimePrice(e);
+        if (!tp) return;
+        const d = this.tool.drawings[this._edycja.idx];
+        if (!d) return;
+        if (this._edycja.punkt === "calosc") {
+          // przesuniecie calego rysunku o roznice wzgledem miejsca chwytu
+          const k = this._edycja.kopia, s0 = this._edycja.start;
+          const dt = tp.time - s0.time, dp = tp.price / (s0.price || 1);
+          for (const nazwa of ["a", "b", "c"]) {
+            if (!k[nazwa]) continue;
+            d[nazwa] = { time: this._najblizszyCzas(k[nazwa].time + dt), price: k[nazwa].price * dp };
+          }
+        } else {
+          d[this._edycja.punkt] = tp;
+        }
+        this.tool.refresh();
+        e.preventDefault();
+        return;
+      }
       if (!this._dragging) return;
       if (this._capturedId != null && e.pointerId !== this._capturedId) return;
       e.preventDefault();
@@ -944,6 +998,15 @@ class ChmuraChart {
       if (tp) { this.tool.preview = tp; this.tool.refresh(); }
     }, { passive: false });
     const finish = (e) => {
+      if (this._edycja) {
+        this._edycja = null;
+        this._dragging = false;
+        this._releaseCapture();
+        this._setPan(true);
+        this._saveDrawings();
+        this.tool.refresh();
+        return;
+      }
       if (!this._dragging) return;
       if (this._capturedId != null && e.pointerId !== this._capturedId) return;
       this._dragging = false;
@@ -1107,44 +1170,50 @@ class ChmuraChart {
   // a nie tylko wtedy, gdy chmura zapisala zdarzenie. Progi luzniejsze niz alertowe.
   _liczKanal() {
     const d = this.data;
-    const OKNO = 60, K = 2;
-    if (!d || d.length < OKNO + K + 2) return null;
-    const n = d.length, i = n - 1, a = Math.max(0, i - OKNO + 1);
-    const gr = [], dl = [];
-    for (let j = a; j <= i - K; j++) {
-      let maxH = -Infinity, minL = Infinity;
-      if (j < K || j >= n - K) continue;
-      for (let q = j - K; q <= j + K; q++) { maxH = Math.max(maxH, d[q].high); minL = Math.min(minL, d[q].low); }
-      if (d[j].high === maxH) gr.push(j);
-      if (d[j].low === minL) dl.push(j);
-    }
-    if (gr.length < 3 || dl.length < 3) return null;
-    const fit = (idx, sel) => {
-      const mx = idx.reduce((x, y) => x + y, 0) / idx.length;
-      const my = idx.reduce((x, j) => x + sel(d[j]), 0) / idx.length;
+    if (!d || d.length < 45) return null;
+    const n = d.length;
+    let best = null;
+    // probujemy kilku dlugosci okna i wybieramy kanal, ktorego krawedzie
+    // NAJCZESCIEJ dotykaja swiec - tak jak rysuje sie kanal recznie
+    for (const W of [40, 60, 90, 120, 160, 220]) {
+      if (n < W + 2) break;
+      const a = n - W, i2 = n - 1;
+      // nachylenie z regresji po zamknieciach (odporne na pojedyncze knoty)
+      let sx = 0, sy = 0;
+      for (let j = a; j <= i2; j++) { sx += j; sy += d[j].close; }
+      const mx = sx / W, my = sy / W;
       let num = 0, den = 0;
-      for (const j of idx) { num += (j - mx) * (sel(d[j]) - my); den += (j - mx) ** 2; }
-      const k = den === 0 ? 0 : num / den;
-      return [k, my - k * mx];
-    };
-    const [ug, bg] = fit(gr, (r) => r.high);
-    const [ud, bd] = fit(dl, (r) => r.low);
-    const gora = ug * i + bg, dol = ud * i + bd, wys = gora - dol;
-    const px = d[i].close;
-    if (wys <= 0 || wys / px < 0.04 || wys / px > 0.8) return null;   // do ogladania: od 4%
-    if (Math.abs(ug - ud) / wys > 0.6) return null;                   // krawedzie ~rownolegle
-    let w = 0, ile = 0;
-    for (let j = a; j <= i; j++) {
-      const g = ug * j + bg, dd = ud * j + bd, tol = 0.12 * wys;
-      if (d[j].close <= g + tol && d[j].close >= dd - tol) w++;
-      ile++;
+      for (let j = a; j <= i2; j++) { num += (j - mx) * (d[j].close - my); den += (j - mx) ** 2; }
+      const nach = den === 0 ? 0 : num / den;
+      // krawedzie jako OBWIEDNIA: przesuwamy linie tak, by dotknely skrajnych swiec
+      let gornaC = -Infinity, dolnaC = Infinity;
+      for (let j = a; j <= i2; j++) {
+        gornaC = Math.max(gornaC, d[j].high - nach * j);
+        dolnaC = Math.min(dolnaC, d[j].low - nach * j);
+      }
+      const wys = gornaC - dolnaC;
+      const px = d[i2].close;
+      if (!(wys > 0) || wys / px < 0.03 || wys / px > 1.2) continue;
+      // ile swiec realnie dotyka krawedzi (w promieniu 8% wysokosci kanalu)
+      let dot = 0;
+      for (let j = a; j <= i2; j++) {
+        const g = nach * j + gornaC, dd = nach * j + dolnaC;
+        if (d[j].high >= g - 0.08 * wys || d[j].low <= dd + 0.08 * wys) dot++;
+      }
+      // premia za dluzszy kanal: dluzszy = wazniejszy, gdy dotkniec podobnie
+      const ocena = dot / Math.sqrt(W) + W / 2000;
+      if (!best || ocena > best.ocena) {
+        best = { ocena, a, i2, nach, gornaC, dolnaC, wys, px, dot, W };
+      }
     }
-    if (w / ile < 0.75) return null;                                  // do ogladania: od 75%
-    const nach = ((ug + ud) / 2) / px;
+    if (!best || best.dot < 6) return null;
+    const { a, i2, nach, gornaC, dolnaC, wys, px } = best;
+    const nachRel = nach / px;
     return {
-      t1: d[a].time, t2: d[i].time,
-      g1: ug * a + bg, g2: gora, d1: ud * a + bd, d2: dol,
-      kier: nach > 0.001 ? "wzrostowy" : nach < -0.001 ? "spadkowy" : "boczny",
+      t1: d[a].time, t2: d[i2].time,
+      g1: nach * a + gornaC, g2: nach * i2 + gornaC,
+      d1: nach * a + dolnaC, d2: nach * i2 + dolnaC,
+      kier: nachRel > 0.0008 ? "wzrostowy" : nachRel < -0.0008 ? "spadkowy" : "boczny",
       wys_pct: (wys / px) * 100, alert: null, lokalny: true,
     };
   }
@@ -1253,6 +1322,35 @@ class ChmuraChart {
     this.tool.sel = null;
     this.clearTool();
     this._saveDrawings();
+  }
+
+  // ktory uchwyt zaznaczonego rysunku jest pod kursorem (promien 12 px)
+  _uchwytPod(e) {
+    const idx = this.tool.sel;
+    if (idx == null || !this.tool.drawings[idx]) return null;
+    const d = this.tool.drawings[idx];
+    const rect = this.el.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const ts = this.chart.timeScale();
+    for (const nazwa of ["a", "b", "c"]) {
+      const q = d[nazwa];
+      if (!q) continue;
+      const x = ts.timeToCoordinate(q.time), y = this.candles.priceToCoordinate(q.price);
+      if (x === null || y === null) continue;
+      if (Math.hypot(mx - x, my - y) <= 12) return { idx, punkt: nazwa };
+    }
+    return null;
+  }
+
+  // czas przyciagany do istniejacej swiecy (wykres nie zna czasow pomiedzy)
+  _najblizszyCzas(t) {
+    if (!this.data.length) return t;
+    let best = this.data[0].time, bd = Math.abs(t - best);
+    for (const r of this.data) {
+      const dd = Math.abs(r.time - t);
+      if (dd < bd) { bd = dd; best = r.time; }
+    }
+    return best;
   }
 
   // trafienie w rysunek: zwraca indeks najblizszego w promieniu ~10 px
@@ -1848,6 +1946,6 @@ $("main").addEventListener("click", () => {
 })();
 
 </script>
-<script>if (location.protocol === "https:" && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");</script>
+<script>if (location.protocol === "https:" && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then((r) => r.update());</script>
 </body>
 </html>
