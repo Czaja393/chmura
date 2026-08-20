@@ -187,7 +187,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-1842";</script></head>
+<script>window.CHMURA_BUILD="20.08-1938";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -671,19 +671,18 @@ async function fetchCoinInfo(symbol) {
   const base = hist.length >= 20
     ? (hist.length % 2 ? hist[hist.length >> 1] : (hist[(hist.length >> 1) - 1] + hist[hist.length >> 1]) / 2)
     : null;
-  const baseSym = symbol.replace(/usdt$/, "");
-  let mcap = mcapCache.get(baseSym);
+  // Kapitalizacja idzie z tabeli `coin_mcap`, ktora kolektor odswieza co 2 h.
+  // Wczesniej aplikacja pytala CoinGecko prosto z przegladarki przy KAZDEJ zmianie
+  // coina - po kilkunastu klikach wpadala w limit, a nieudany odczyt byl zapisywany
+  // w cache jako null, wiec kapitalizacja znikala do konca sesji (przypadek BTW).
+  let mcap = mcapCache.get(symbol);
   if (mcap === undefined) {
     mcap = null;
     try {
-      const s = await (await fetch(`https://api.coingecko.com/api/v3/search?query=${baseSym}`)).json();
-      const coin = (s.coins || []).find((c) => String(c.symbol).toLowerCase() === baseSym);
-      if (coin) {
-        const m = await (await fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${coin.id}`)).json();
-        mcap = m?.[0]?.market_cap ?? null;
-      }
-    } catch (_e) { /* limit CoinGecko - trudno */ }
-    mcapCache.set(baseSym, mcap);
+      const m = await rest(`coin_mcap?symbol=eq.${symbol}&select=mcap,nazwa,cg_id`);
+      mcap = m?.[0]?.mcap != null ? Number(m[0].mcap) : null;
+      if (mcap != null) mcapCache.set(symbol, mcap);   // cache'ujemy TYLKO sukces
+    } catch (_e) { /* brak sieci - sprobujemy przy nastepnym wejsciu */ }
   }
   return { vol24, base, mcap };
 }
@@ -2125,7 +2124,8 @@ function renderInfoBar() {
   $("info-bar").innerHTML =
     `<span>Wolumen 24h (HTX): <b>${fmtUsd(i.vol24)}</b></span>` +
     `<span>Norma 30 dni: <b>${fmtUsd(i.base)}</b>${i.vol24 && i.base ? ` <span class="muted">(24h = ${(i.vol24 / i.base).toFixed(1)}× normy)</span>` : ""}</span>` +
-    `<span>Kapitalizacja: <b>${fmtUsd(i.mcap)}</b></span>` +
+    `<span>Kapitalizacja: <b>${i.mcap != null ? fmtUsd(i.mcap) : "—"}</b>` +
+    `${i.mcap == null ? '<span class="muted" title="kolektor uzupełnia dane z CoinGecko co 2 godziny"> (jeszcze nie pobrana)</span>' : ""}</span>` +
     `<span class="muted" title="wersja aplikacji - gdy nie zgadza sie po zmianach, odswiez Ctrl+F5">wersja ${window.CHMURA_BUILD ?? "?"}</span>`;
 }
 
@@ -2247,6 +2247,8 @@ async function loadVolumes() {
 $("symbol-list").addEventListener("click", async (e) => {
   const star = e.target.dataset.star;
   if (star) {
+    // gwiazdka siedzi teraz WEWNATRZ linka - bez tego klik w nia przeladowywalby strone
+    e.preventDefault();
     const isFav = state.fav.has(star);
     await toggleWatch(star, isFav);
     isFav ? state.fav.delete(star) : state.fav.add(star);
