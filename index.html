@@ -71,6 +71,27 @@
   #signals-panel .sig { padding: 3px 0; border-bottom: 1px solid #2a2e3955; font-size: 12px; }
   .muted { color: var(--muted); }
   .only-mobile { display: none; }
+  /* menu w naglowku - zamiast kilkunastu przyciskow obok siebie */
+  .menu-box { position: relative; }
+  .menu { display: none; position: absolute; top: 30px; right: 0; z-index: 40;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px; min-width: 200px; box-shadow: 0 8px 24px #0008; }
+  .menu.open { display: block; }
+  .menu-tyt { font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--muted); padding: 6px 8px 3px; }
+  .menu label { display: block; padding: 4px 8px; cursor: pointer; border-radius: 5px; }
+  .menu label:hover { background: #2a2e3966; }
+  .menu-poz { display: block; width: 100%; text-align: left; background: none; border: none;
+    color: var(--text); padding: 6px 8px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+  .menu-poz:hover { background: #2a2e3966; }
+  .menu-poz.active { background: var(--accent); color: #fff; }
+  /* formularze w prawym panelu - czytelniejsze etykiety i odstepy */
+  .panel h3 .pod { display: block; font-size: 10px; color: var(--muted); text-transform: none;
+    letter-spacing: 0; margin-top: 2px; font-weight: 400; }
+  .calc .grupa { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 8px; }
+  .calc button.glowny { width: 100%; margin-top: 10px; padding: 9px; border-radius: 6px;
+    background: var(--accent); color: #fff; border: none; cursor: pointer; font-size: 13px; }
+  .calc button.glowny:hover { filter: brightness(1.12); }
 
   #main { position: relative; }
   #rys-bar { position: absolute; left: 6px; top: 46px; z-index: 21; display: flex; flex-direction: column;
@@ -113,7 +134,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-1003";</script></head>
+<script>window.CHMURA_BUILD="20.08-1729";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -129,30 +150,43 @@
     <button class="iv-btn" data-iv="4hour">4H</button>
     <button class="iv-btn active" data-iv="1day">1D</button>
     <span style="flex:1"></span>
-    <div style="position:relative">
-      <button class="tool-btn" id="btn-ma">MA ▾</button>
-      <div id="ma-menu" style="display:none;position:absolute;top:30px;right:0;background:#1e222d;border:1px solid #2a2e39;border-radius:6px;padding:8px;z-index:30;min-width:110px">
-        <label style="display:block;padding:2px"><input type="checkbox" data-ma="SMA20"> SMA 20</label>
-        <label style="display:block;padding:2px"><input type="checkbox" data-ma="SMA50"> SMA 50</label>
-        <label style="display:block;padding:2px"><input type="checkbox" data-ma="SMA200"> SMA 200</label>
-        <label style="display:block;padding:2px"><input type="checkbox" data-ma="EMA12"> EMA 12</label>
-        <label style="display:block;padding:2px"><input type="checkbox" data-ma="EMA26"> EMA 26</label>
+
+    <div class="menu-box">
+      <button class="tool-btn" id="btn-m-wykres">Wykres ▾</button>
+      <div class="menu" id="m-wykres">
+        <div class="menu-tyt">Średnie kroczące</div>
+        <label><input type="checkbox" data-ma="SMA20"> SMA 20</label>
+        <label><input type="checkbox" data-ma="SMA50"> SMA 50</label>
+        <label><input type="checkbox" data-ma="SMA200"> SMA 200</label>
+        <label><input type="checkbox" data-ma="EMA12"> EMA 12</label>
+        <label><input type="checkbox" data-ma="EMA26"> EMA 26</label>
+        <div class="menu-tyt">Nakładki</div>
+        <button class="menu-poz" id="btn-kanaly">Kanały</button>
+        <button class="menu-poz" id="btn-sr">Wsparcia i opory</button>
+        <button class="menu-poz" id="btn-ichimoku">Chmura Ichimoku</button>
+        <button class="menu-poz" id="btn-fibo">Poziomy Fibonacciego</button>
       </div>
     </div>
+
+    <div class="menu-box">
+      <button class="tool-btn" id="btn-m-listy">Listy ▾</button>
+      <div class="menu" id="m-listy">
+        <div class="menu-tyt">Co znalazł system</div>
+        <button class="menu-poz" id="btn-signals">⚡ Sygnały</button>
+        <button class="menu-poz" id="btn-formacje">📐 Formacje</button>
+        <button class="menu-poz" id="btn-sciany">📖 Ściany w arkuszu</button>
+        <div class="menu-tyt">Moje</div>
+        <button class="menu-poz" id="btn-obserwacje">👁 Obserwacje</button>
+        <button class="menu-poz" id="btn-alarmy">🔔 Alarmy cenowe</button>
+        <button class="menu-poz" id="btn-notatnik">📝 Notatnik</button>
+        <div class="menu-tyt">Rynek</div>
+        <button class="menu-poz" id="btn-delist">Delistingi</button>
+        <button class="menu-poz" id="btn-news">Newsy</button>
+      </div>
+    </div>
+
     <button class="tool-btn" id="btn-motyw" title="jasny / ciemny motyw">🌗</button>
-    <button class="tool-btn" id="btn-kanaly" title="kanały wykryte przez system">Kanały</button>
-    <button class="tool-btn" id="btn-sr" title="wsparcia i opory z historii wykresu">Wsparcia/Opory</button>
-    <button class="tool-btn" id="btn-ichimoku">Ichimoku</button>
-    <button class="tool-btn" id="btn-fibo">Fibo auto</button>
-    <button class="tool-btn" id="btn-fibo2" title="dwa klikniecia na wykresie">Fibo 2pkt</button>
-    <button class="tool-btn" id="btn-ruler" title="dwa klikniecia: zmierz % miedzy punktami">Miarka %</button>
-    <button class="tool-btn" id="btn-signals">Sygnały</button>
-    <button class="tool-btn" id="btn-formacje">Formacje</button>
-    <button class="tool-btn" id="btn-sciany" title="duże zlecenia w arkuszu">Ściany</button>
-    <button class="tool-btn" id="btn-alarmy" title="Twoje alarmy cenowe">Alarmy</button>
-    <button class="tool-btn" id="btn-delist">Delisting</button>
-    <button class="tool-btn" id="btn-news">Newsy</button>
-    <button class="tool-btn" id="btn-refresh">Odśwież</button>
+    <button class="tool-btn" id="btn-refresh" title="odśwież dane">⟳</button>
     <button class="tool-btn only-mobile" id="btn-panel">Panel ▸</button>
     <span id="live-dot" title="live"></span>
   </header>
@@ -216,27 +250,27 @@
       </select></h3>
       <div id="book" class="muted" style="max-height:46vh;overflow-y:auto">łączenie…</div></div>
     <div class="panel calc">
-      <h3>Kalkulator płynności i prowizji</h3>
-      <label>Kierunek</label>
+      <h3>Ile realnie zapłacę<span class="pod">poślizg na arkuszu + prowizje</span></h3>
+      <label>Co robię</label>
       <select id="c-side"><option value="sell">SPRZEDAJĘ (w market)</option><option value="buy">KUPUJĘ (w market)</option></select>
-      <label>Kwota (USD)</label>
+      <label>Za ile (USD)</label>
       <input id="c-qty" type="number" placeholder="np. 20000" min="0" step="any">
       <label style="display:flex;gap:6px;align-items:center;margin-top:4px">
         <input id="c-mode" type="checkbox" style="width:auto"> podaję w coinach, nie w USD
       </label>
-      <label>Cena wejścia (opcjonalnie — policzy zysk)</label>
+      <label>Moja cena wejścia (jeśli liczysz zysk)</label>
       <input id="c-entry" type="number" placeholder="np. 0.004" min="0" step="any">
-      <label>Prowizja za transakcję (%)</label>
+      <label>Prowizja giełdy (%)</label>
       <input id="c-fee" type="number" value="0.2" step="0.01" min="0">
-      <label>Prowizja przewalutowania (%, jeśli dotyczy)</label>
+      <label>Przewalutowanie (%, gdy dotyczy)</label>
       <input id="c-conv" type="number" value="0" step="0.01" min="0">
       <div class="out" id="c-out"><div class="muted">Podaj ilość — liczę po żywym arkuszu.</div></div>
     </div>
     <div class="panel calc" id="orders-panel">
-      <h3>Zlecenie (kupno)</h3>
+      <h3>Kup przez system<span class="pod">tworzy zlecenie, potwierdzasz w Telegramie</span></h3>
       <label>Kwota (USD)</label>
       <input id="o-budget" type="number" placeholder="np. 500" min="1" step="any">
-      <label>Tryb</label>
+      <label>Sposób wejścia</label>
       <select id="o-mode">
         <option value="ladder">WG ZASAD — 25/35/40 + auto-wyjście 1,30×</option>
         <option value="twap">TWAP — na raty (nie robi świecy)</option>
@@ -249,18 +283,18 @@
         <input id="o-price" type="number" placeholder="np. 0.004" min="0" step="any">
       </div>
       <div id="o-twap-opts">
-        <label>Rozłóż na (godzin)</label>
+        <label>Przez ile godzin</label>
         <input id="o-hours" type="number" value="12" min="1" step="1">
-        <label>Liczba transz</label>
+        <label>Na ile transz</label>
         <input id="o-slices" type="number" value="8" min="2" step="1">
       </div>
-      <button class="tool-btn" id="o-create" style="margin-top:8px;border:1px solid var(--accent);color:var(--text);width:100%">
-        Utwórz zlecenie → potwierdź w Telegramie
-      </button>
+      <button class="glowny" id="o-create">Utwórz zlecenie</button>
+      <div class="muted" style="font-size:11px;margin-top:4px">
+        Nic się nie wykona, dopóki nie potwierdzisz w Telegramie.
+      </div>
       <div id="o-msg" class="muted" style="margin-top:6px;font-size:11px"></div>
       <div id="o-list" style="margin-top:8px"></div>
     </div>
-    <div class="panel" id="signals-panel"><h3>Sygnały (ten coin)</h3><div id="sig-list" class="muted">—</div></div>
   </div>
 </div>
 <script type="module">
@@ -484,6 +518,40 @@ async function dodajAlarm(symbol, price, kierunek, cenaZal, notatka = null) {
 
 async function usunAlarm(id) {
   await fetch(`${SUPABASE_URL}/rest/v1/price_alerts?id=eq.${id}`, { method: "DELETE", headers: H });
+}
+
+// LISTY OBSERWACJI uzytkownika
+async function fetchListy() {
+  return rest(`listy_obserwacji?select=symbol,lista,ts,notatka&order=ts.desc&limit=500`);
+}
+async function dodajDoListy(symbol, lista, notatka = null) {
+  await fetch(`${SUPABASE_URL}/rest/v1/listy_obserwacji`, {
+    method: "POST",
+    headers: { ...H, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({ symbol, lista, notatka }),
+  });
+}
+async function usunZListy(symbol, lista) {
+  await fetch(`${SUPABASE_URL}/rest/v1/listy_obserwacji?symbol=eq.${symbol}&lista=eq.${lista}`,
+              { method: "DELETE", headers: H });
+}
+
+// NOTATNIK
+async function fetchNotatki(symbol = null) {
+  return rest(`notatki?select=id,symbol,tytul,tresc,ts,przypomnienie,wyslane` +
+              (symbol ? `&symbol=eq.${symbol}` : "") + `&order=ts.desc&limit=300`);
+}
+async function dodajNotatke(n) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/notatki`, {
+    method: "POST",
+    headers: { ...H, "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify(n),
+  });
+  if (!r.ok) throw new Error(`notatka: ${r.status}`);
+  return (await r.json())[0];
+}
+async function usunNotatke(id) {
+  await fetch(`${SUPABASE_URL}/rest/v1/notatki?id=eq.${id}`, { method: "DELETE", headers: H });
 }
 
 async function fetchDelistings(symbol) {
@@ -917,23 +985,36 @@ class ToolPrimitive {
     const yd1 = this._s.priceToCoordinate(k.d1), yd2 = this._s.priceToCoordinate(k.d2);
     if ([yg1, yg2, yd1, yd2].some((v) => v === null)) return;
     ctx.save();
-    const zWyzszego = k.zrodlo && this._ivBiez && k.zrodlo !== this._ivBiez;
-    ctx.strokeStyle = k.wBudowie ? "rgba(255,167,38,0.65)"
-      : k.alert ? "#26c6da" : zWyzszego ? "rgba(126,87,194,0.6)" : "rgba(38,198,218,0.5)";
-    ctx.lineWidth = k.alert ? 1.6 : 1.2;
-    if (!k.alert) ctx.setLineDash(k.wBudowie ? [2, 3] : zWyzszego ? [8, 5] : [5, 4]);
+    // KAZDY interwal ma wlasny kolor i wlasny wzor linii - przy kilku kanalach
+    // naraz od razu widac, ktory jest ktory (wczesniej wszystkie byly cyjanowe)
+    const STYL = {
+      "1D": { kolor: "56,142,255", kreska: [10, 4] },     // niebieski
+      "4H": { kolor: "38,198,218", kreska: [6, 3] },      // cyjan
+      "1H": { kolor: "156,110,220", kreska: [3, 3] },     // fiolet
+      "15m": { kolor: "120,190,110", kreska: [2, 4] },    // zielony
+    };
+    const st = STYL[k.zrodlo] ?? { kolor: "38,198,218", kreska: [5, 4] };
+    const kolor = k.wBudowie ? "255,167,38" : st.kolor;   // w budowie zawsze pomaranczowy
+    const swoj = k.zrodlo === this._ivBiez;
+    ctx.strokeStyle = `rgba(${kolor},${swoj ? 0.95 : 0.55})`;
+    ctx.lineWidth = swoj ? 1.8 : 1.2;
+    ctx.setLineDash(k.wBudowie ? [2, 3] : st.kreska);
     ctx.beginPath(); ctx.moveTo(x1, yg1); ctx.lineTo(x2, yg2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(x1, yd1); ctx.lineTo(x2, yd2); ctx.stroke();
     ctx.setLineDash([]);
     if (k.dotkniecia) {
       ctx.font = "10px Segoe UI";
       ctx.fillStyle = "#26c6da";
-      ctx.fillStyle = k.wBudowie ? "#ffa726" : "#26c6da";
-      ctx.fillText((k.wBudowie ? "kanał w budowie " : "kanał ") +
-                   `${k.kier} · ${k.dotkniecia} dotknięć` +
-                   (k.zrodlo ? ` · ${k.zrodlo}` : ""), x1 + 4, Math.min(yg1, yg2) - 5);
+      // podpis przy PRAWYM koncu kanalu, w kolorze jego linii - przy kilku
+      // kanalach naraz podpisy nie nachodza na siebie
+      ctx.fillStyle = `rgb(${kolor})`;
+      const opis = (k.wBudowie ? "w budowie · " : "") +
+                   `${k.zrodlo ?? ""} ${k.kier} · ${k.dotkniecia} dot.`;
+      ctx.textAlign = "right";
+      ctx.fillText(opis, Math.max(60, x2 - 6), yg2 - 5);
+      ctx.textAlign = "left";
     }
-    ctx.fillStyle = k.alert ? "rgba(38,198,218,0.10)" : "rgba(38,198,218,0.05)";
+    ctx.fillStyle = `rgba(${kolor},${swoj ? 0.09 : 0.04})`;
     ctx.beginPath();
     ctx.moveTo(x1, yg1); ctx.lineTo(x2, yg2); ctx.lineTo(x2, yd2); ctx.lineTo(x1, yd1);
     ctx.closePath(); ctx.fill();
@@ -1749,6 +1830,14 @@ class OrderBook {
     this.recalc();
   }
 
+  // po odrysowaniu przewijamy panel tak, by SPREAD byl na srodku - inaczej
+  // widac tylko koncowke arkusza i trzeba scrollowac przy kazdej zmianie coina
+  _nasrodek() {
+    const sp = this.el.querySelector(".spread");
+    if (!sp) return;
+    this.el.scrollTop = Math.max(0, sp.offsetTop - this.el.clientHeight / 2 + sp.offsetHeight / 2);
+  }
+
   render(depth = this.glebokosc ?? 12) {
     if (!this.bids.length) { this.el.textContent = "brak danych arkusza"; return; }
     const maxQ = Math.max(...this.asks.slice(0, depth).map(([, q]) => q),
@@ -1764,6 +1853,7 @@ class OrderBook {
       [...this.asks.slice(0, depth)].reverse().map(([p, q]) => row(p, q, "ask")).join("") +
       `<div class="spread">spread ${fmtP(spread)} (${spreadPct.toFixed(2)}%)</div>` +
       this.bids.slice(0, depth).map(([p, q]) => row(p, q, "bid")).join("");
+    if (!this._bylSrodek) { this._nasrodek(); this._bylSrodek = true; }
   }
 
   // zejscie po arkuszu: ile dostane / zaplace i do jakiej ceny zejde
@@ -1966,7 +2056,6 @@ async function loadSymbol(sym) {
   }).catch(() => { /* brak alarmow */ });
   state.delist = await fetchDelistings(sym);
   chart.setMarkersAll(state.signals, state.delist);
-  renderSignalsPanel();
   feed.watch(sym, HTX_PERIOD[state.interval]);
   // pasek info (wolumen / baza / kapitalizacja) - nie blokuje wykresu
   renderOrders();
@@ -1977,17 +2066,6 @@ async function loadSymbol(sym) {
     state.info = info;
     renderInfoBar();
   });
-}
-
-function renderSignalsPanel() {
-  const KIND = { flush: "OKAZJA?", retrace_opportunity: "BUDUJ POZYCJE?", exit: "WYCHODZ", wave: "FALA", awake: "BUDZI SIE", grupa_a: "CICHA AKUM.", grupa_b: "SCHEMAT GRUPY?", grupa_c: "KLIMAKS DYSTR." };
-  const last = [...state.signals].reverse().slice(0, 15);
-  $("sig-list").innerHTML = last.length
-    ? last.map((s) => {
-        const px = signalPrice(s.detail);
-        return `<div class="sig"><b>${KIND[s.kind] ?? s.kind}</b> <span class="muted">${plDate(s.ts)}</span> ${px != null ? fmtPx(px) : "—"}</div>`;
-      }).join("")
-    : "Brak sygnałów.";
 }
 
 function renderList() {
@@ -2084,6 +2162,18 @@ $("btn-usun-zazn").addEventListener("click", (e) => {
 });
 $("btn-refresh").addEventListener("click", () => loadSymbol(state.symbol));
 window.CHMURA_CHART = chart;   // uchwyt do diagnostyki (konsola przegladarki)
+// menu w naglowku: klik otwiera, klik obok zamyka
+document.querySelectorAll(".menu-box > .tool-btn").forEach((b) => {
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const m = b.nextElementSibling;
+    document.querySelectorAll(".menu").forEach((x) => { if (x !== m) x.classList.remove("open"); });
+    m.classList.toggle("open");
+  });
+});
+document.addEventListener("click", () => document.querySelectorAll(".menu").forEach((m) => m.classList.remove("open")));
+document.querySelectorAll(".menu").forEach((m) => m.addEventListener("click", (e) => e.stopPropagation()));
+
 const ustawMotyw = (jasny) => {
   document.body.classList.toggle("jasny", jasny);
   localStorage.setItem("chmura.motyw", jasny ? "jasny" : "ciemny");
@@ -2104,18 +2194,13 @@ $("btn-lista").addEventListener("click", () => ustawListe(!$("layout").classList
 if (localStorage.getItem("chmura.lista") === "0") ustawListe(true);
 $("btn-ichimoku").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleIchimoku()));
 $("btn-fibo").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleFibo()));
-$("btn-fibo2").addEventListener("click", () => chart.armTool("fibo2"));
-$("btn-ruler").addEventListener("click", () => chart.armTool("ruler"));
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { chart.clearTool(); odswiezPasek(); }
   if ((e.ctrlKey || e.metaKey) && e.key === "z") { chart.eraseTool(false); odswiezPasek(); }
   if (e.key === "Delete" || e.key === "Backspace") { chart.eraseTool(false); odswiezPasek(); }
 });
-$("btn-ma").addEventListener("click", () => {
-  const m = $("ma-menu");
-  m.style.display = m.style.display === "none" ? "block" : "none";
-});
-document.querySelectorAll("#ma-menu input").forEach((cb) =>
+// srednie kroczace: teraz w menu "Wykres"
+document.querySelectorAll("[data-ma]").forEach((cb) =>
   cb.addEventListener("change", () => chart.toggleMA(cb.dataset.ma)));
 
 // --- modal: sygnaly live systemu / delistingi ---
@@ -2124,6 +2209,7 @@ function openModal(title, html) {
   $("modal-title").textContent = title;
   $("modal-body").innerHTML = html;
   $("modal").style.display = "block";
+  if (typeof podepnijListy === "function") podepnijListy($("modal-body"));
 }
 $("modal-close").addEventListener("click", () => $("modal").style.display = "none");
 $("modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("modal").style.display = "none"; });
@@ -2148,13 +2234,15 @@ $("btn-signals").addEventListener("click", async () => {
       <td style="padding:4px 8px">${px != null ? fmtPx(px) : "—"}</td>
       <td style="padding:4px 8px;color:${col}">${fmt(r?.ret_now_pct)}${oc}</td>
       <td style="padding:4px 8px" class="muted">${fmt(r?.mfe_pct)} / ${fmt(r?.mae_pct)}</td>
+      <td style="padding:4px 8px;white-space:nowrap">${przyciskiList(s.symbol)}</td>
     </tr>`;
   }).join("");
   openModal(`Sygnały systemu — od startu 11.08 (${sigs.length})`,
     `<table style="width:100%;border-collapse:collapse;font-size:12px">
       <tr class="muted"><th style="text-align:left;padding:4px 8px">data</th><th style="text-align:left;padding:4px 8px">coin</th>
       <th style="text-align:left;padding:4px 8px">sygnał</th><th style="text-align:left;padding:4px 8px">cena sygnału</th>
-      <th style="text-align:left;padding:4px 8px">wynik teraz</th><th style="text-align:left;padding:4px 8px">max / min</th></tr>${rows}</table>
+      <th style="text-align:left;padding:4px 8px">wynik teraz</th><th style="text-align:left;padding:4px 8px">max / min</th>
+      <th style="text-align:left;padding:4px 8px">do listy</th></tr>${rows}</table>
     <p class="muted" style="margin-top:8px">Klik w wiersz = wykres coina. Wyniki liczone od ceny sygnału (tracker, odświeżany co dobę i po komendzie "raport").</p>`);
 });
 
@@ -2183,6 +2271,7 @@ async function pokazFormacje() {
         : (TYP_PL[r.d.typ] ?? r.d.typ ?? "—")}</td>
       <td style="padding:4px 8px">${r.d.wys_pct != null ? Number(r.d.wys_pct).toFixed(0) + "%" : "—"}</td>
       <td style="padding:4px 8px;color:${r.d.alert ? "#26c6da" : "#787b86"}">${r.d.alert ? "przewaga" : "informacja"}</td>
+      <td style="padding:4px 8px;white-space:nowrap">${przyciskiList(r.symbol)}</td>
     </tr>`).join("");
   openModal(`Formacje — kanały (${f.length})`,
     `<div style="margin-bottom:8px">
@@ -2193,7 +2282,8 @@ async function pokazFormacje() {
       <tr class="muted"><th style="text-align:left;padding:4px 8px">data</th>
       <th style="text-align:left;padding:4px 8px">coin</th><th style="text-align:left;padding:4px 8px">interwał</th>
       <th style="text-align:left;padding:4px 8px">formacja</th><th style="text-align:left;padding:4px 8px">zdarzenie</th>
-      <th style="text-align:left;padding:4px 8px">wysokość</th><th style="text-align:left;padding:4px 8px">status</th></tr>${rows}</table>
+      <th style="text-align:left;padding:4px 8px">wysokość</th><th style="text-align:left;padding:4px 8px">status</th>
+      <th style="text-align:left;padding:4px 8px">do listy</th></tr>${rows}</table>
      <p class="muted" style="margin-top:8px">„Przewaga" = układ, który historycznie zarabiał (tylko takie idą na Telegram).
      „Informacja" = kanał wykryty, ale bez policzonej przewagi. Klik w wiersz = wykres coina.</p>`);
   const b = document.getElementById("btn-form-filtr");
@@ -2239,6 +2329,109 @@ async function pokazSciany() {
      czy takie zlecenia coś zapowiadają.</p>`);
 }
 $("btn-sciany").addEventListener("click", pokazSciany);
+
+// --- MOJE LISTY: przenoszenie coinow do wlasnych kubelkow ---
+const LISTY = [["wzrost", "📈 wzrost"], ["spadek", "📉 spadek"],
+               ["boczny", "➖ boczny"], ["archiwum", "🗄 archiwum"]];
+function przyciskiList(sym) {
+  return LISTY.map(([kod, etykieta]) =>
+    `<button class="tool-btn" data-lista="${kod}" data-sym="${sym}" title="przenieś do listy ${kod}"
+      style="border:1px solid var(--border);padding:1px 5px;font-size:11px">${etykieta}</button>`).join(" ");
+}
+function podepnijListy(root) {
+  root.querySelectorAll("[data-lista]").forEach((b) =>
+    b.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await dodajDoListy(b.dataset.sym, b.dataset.lista);
+      b.textContent = "✓";
+      b.disabled = true;
+    }));
+}
+
+async function pokazObserwacje(lista = "wzrost") {
+  openModal("Obserwacje", `<div class="muted">ładowanie…</div>`);
+  const dane = await fetchListy();
+  const zakladki = LISTY.map(([kod, et]) => {
+    const ile = dane.filter((r) => r.lista === kod).length;
+    return `<button class="tool-btn" data-zak="${kod}" style="border:1px solid ${kod === lista ? "var(--accent)" : "var(--border)"};margin-right:4px">${et} (${ile})</button>`;
+  }).join("");
+  const rows = dane.filter((r) => r.lista === lista).map((r) => `
+    <tr style="border-bottom:1px solid #2a2e3955">
+      <td style="padding:4px 8px;cursor:pointer" data-goto="${r.symbol}"><b>${r.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
+      <td style="padding:4px 8px" class="muted">${plDate(r.ts, false)}</td>
+      <td style="padding:4px 8px" class="muted">${r.notatka ?? ""}</td>
+      <td style="padding:4px 8px"><button class="tool-btn" data-usun-liste="${r.symbol}|${r.lista}"
+        style="border:1px solid var(--border)">usuń</button></td>
+    </tr>`).join("");
+  openModal(`Obserwacje — ${LISTY.find((l) => l[0] === lista)[1]}`,
+    `<div style="margin-bottom:8px">${zakladki}</div>
+     <table style="width:100%;border-collapse:collapse;font-size:12px">${rows ||
+       `<tr><td class="muted" style="padding:8px">Ta lista jest pusta. Coiny dodajesz przyciskami
+        przy sygnałach, formacjach i ścianach.</td></tr>`}</table>`);
+  document.querySelectorAll("#modal-body [data-zak]").forEach((b) =>
+    b.addEventListener("click", () => pokazObserwacje(b.dataset.zak)));
+  document.querySelectorAll("#modal-body [data-usun-liste]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const [sym, l] = b.dataset.usunListe.split("|");
+      await usunZListy(sym, l);
+      pokazObserwacje(lista);
+    }));
+}
+$("btn-obserwacje").addEventListener("click", () => pokazObserwacje());
+
+// --- NOTATNIK: notatki ogolne i per coin, z opcjonalnym przypomnieniem ---
+async function pokazNotatnik(tylkoTenCoin = false) {
+  openModal("Notatnik", `<div class="muted">ładowanie…</div>`);
+  const lista = await fetchNotatki(tylkoTenCoin ? state.symbol : null);
+  const nazwaCoina = state.symbol.toUpperCase().replace(/USDT$/, "");
+  const rows = lista.map((n) => `
+    <tr style="border-bottom:1px solid #2a2e3955">
+      <td style="padding:5px 8px;white-space:nowrap" class="muted">${plDate(n.ts, false)}</td>
+      <td style="padding:5px 8px">${n.symbol ? `<b style="cursor:pointer" data-goto="${n.symbol}">${n.symbol.toUpperCase().replace(/USDT$/, "")}</b>` : "<span class='muted'>ogólna</span>"}</td>
+      <td style="padding:5px 8px">${n.tytul ? `<b>${n.tytul}</b><br>` : ""}${String(n.tresc).replace(/</g, "&lt;")}</td>
+      <td style="padding:5px 8px;white-space:nowrap" class="muted">${n.przypomnienie
+        ? (n.wyslane ? "✓ wysłane" : "🔔 " + plDate(n.przypomnienie, false) + " " + String(n.przypomnienie).slice(11, 16)) : ""}</td>
+      <td style="padding:5px 8px"><button class="tool-btn" data-usun-notatke="${n.id}"
+        style="border:1px solid var(--border)">usuń</button></td>
+    </tr>`).join("");
+  openModal(`Notatnik ${tylkoTenCoin ? "— " + nazwaCoina : `(${lista.length})`}`,
+    `<div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
+       <button class="tool-btn" id="n-filtr" style="border:1px solid var(--border)">
+         ${tylkoTenCoin ? "pokaż wszystkie" : "tylko " + nazwaCoina}</button>
+     </div>
+     <div class="calc" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:10px">
+       <label>Nowa notatka ${tylkoTenCoin ? "dla " + nazwaCoina : "(dla " + nazwaCoina + ", odznacz by była ogólna)"}</label>
+       <input id="n-tytul" placeholder="tytuł (opcjonalnie)">
+       <textarea id="n-tresc" rows="3" placeholder="treść notatki"
+         style="width:100%;margin-top:4px;padding:5px 7px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text)"></textarea>
+       <label style="display:flex;gap:6px;align-items:center;margin-top:6px">
+         <input type="checkbox" id="n-ogolna"> notatka ogólna (nie przypisana do coina)</label>
+       <label>Przypomnienie na Telegramie (opcjonalnie)</label>
+       <input id="n-kiedy" type="datetime-local">
+       <button class="glowny" id="n-zapisz">Zapisz notatkę</button>
+     </div>
+     <table style="width:100%;border-collapse:collapse;font-size:12px">${rows ||
+       `<tr><td class="muted" style="padding:8px">Brak notatek.</td></tr>`}</table>`);
+  const q = (id) => document.getElementById(id);
+  q("n-filtr").addEventListener("click", () => pokazNotatnik(!tylkoTenCoin));
+  q("n-zapisz").addEventListener("click", async () => {
+    const tresc = q("n-tresc").value.trim();
+    if (!tresc) { q("n-tresc").focus(); return; }
+    await dodajNotatke({
+      symbol: q("n-ogolna").checked ? null : state.symbol,
+      tytul: q("n-tytul").value.trim() || null,
+      tresc,
+      przypomnienie: q("n-kiedy").value ? new Date(q("n-kiedy").value).toISOString() : null,
+    });
+    pokazNotatnik(tylkoTenCoin);
+  });
+  document.querySelectorAll("#modal-body [data-usun-notatke]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      await usunNotatke(b.dataset.usunNotatke);
+      pokazNotatnik(tylkoTenCoin);
+    }));
+}
+$("btn-notatnik").addEventListener("click", () => pokazNotatnik(true));
 
 // --- ALARMY CENOWE: klik na wykresie z narzędziem 🔔 zakłada alarm ---
 async function odswiezAlarmy() {
