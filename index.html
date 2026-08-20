@@ -113,7 +113,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-0929";</script></head>
+<script>window.CHMURA_BUILD="20.08-0950";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -459,7 +459,7 @@ async function fetchFormacje(tylkoZPrzewaga = true) {
 async function fetchSciany(symbol = null) {
   const od = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   return rest(`book_walls?ts=gte.${od}` + (symbol ? `&symbol=eq.${symbol}` : "") +
-              `&select=ts,symbol,side,price,usd,krotnosc,pct_vol24,dist_pct,price_at` +
+              `&select=ts,symbol,side,typ,poziomow,price,usd,krotnosc,pct_vol24,dist_pct,price_at` +
               `&order=pct_vol24.desc&limit=200`);
 }
 
@@ -2107,6 +2107,7 @@ async function pokazSciany() {
     <tr data-goto="${r.symbol}" style="cursor:pointer;border-bottom:1px solid #2a2e3955">
       <td style="padding:4px 8px">${plDate(r.ts, false)} ${String(r.ts).slice(11, 16)}</td>
       <td style="padding:4px 8px"><b>${r.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
+      <td style="padding:4px 8px">${r.typ === "warstwa" ? `warstwa (${r.poziomow} zleceń)` : "ściana"}</td>
       <td style="padding:4px 8px;color:${r.side === "kupno" ? "#26a69a" : "#ef5350"}">${STRONA_PL[r.side] ?? r.side}</td>
       <td style="padding:4px 8px">${fmtPx(+r.price)}</td>
       <td style="padding:4px 8px">${fmtVolPl(+r.usd)}</td>
@@ -2117,13 +2118,16 @@ async function pokazSciany() {
   openModal(`Ściany w arkuszu — ostatnia doba (${w.length})`,
     `<table style="width:100%;border-collapse:collapse;font-size:12px">
       <tr class="muted"><th style="text-align:left;padding:4px 8px">kiedy</th>
-      <th style="text-align:left;padding:4px 8px">coin</th><th style="text-align:left;padding:4px 8px">strona</th>
+      <th style="text-align:left;padding:4px 8px">coin</th><th style="text-align:left;padding:4px 8px">rodzaj</th>
+      <th style="text-align:left;padding:4px 8px">strona</th>
       <th style="text-align:left;padding:4px 8px">cena</th><th style="text-align:left;padding:4px 8px">wartość</th>
       <th style="text-align:left;padding:4px 8px">% obrotu</th><th style="text-align:left;padding:4px 8px">× arkusz</th>
       <th style="text-align:left;padding:4px 8px">od ceny</th></tr>${rows}</table>
-     <p class="muted" style="margin-top:8px">Ściana = pojedyncze zlecenie co najmniej 6× większe od typowego
-     poziomu w arkuszu i warte ponad 3% dziennego obrotu, stojące do 4% od ceny. Skan co 10 minut, rotacyjnie
-     po całej giełdzie. To OBSERWACJA, nie sygnał — zbieramy dane, żeby sprawdzić, czy ściany coś zapowiadają.</p>`);
+     <p class="muted" style="margin-top:8px"><b>Ściana</b> = pojedyncze zlecenie min. 4× większe od typowego
+     poziomu w arkuszu i warte ponad 1,5% dziennego obrotu. <b>Warstwa</b> = duża kwota rozbita na min. 5 zleceń
+     w wąskim paśmie cen (min. 3× więcej niż typowe pasmo) — tak zbiera się pozycję po cichu.
+     Skan co 10 minut obejmuje CAŁĄ giełdę. To OBSERWACJA, nie sygnał — zbieramy dane, żeby sprawdzić,
+     czy takie zlecenia coś zapowiadają.</p>`);
 }
 $("btn-sciany").addEventListener("click", pokazSciany);
 
