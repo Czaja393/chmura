@@ -113,7 +113,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-0837";</script></head>
+<script>window.CHMURA_BUILD="20.08-0847";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -789,16 +789,18 @@ class ToolPrimitive {
     const yd1 = this._s.priceToCoordinate(k.d1), yd2 = this._s.priceToCoordinate(k.d2);
     if ([yg1, yg2, yd1, yd2].some((v) => v === null)) return;
     ctx.save();
-    ctx.strokeStyle = k.alert ? "#26c6da" : "rgba(38,198,218,0.45)";
-    ctx.lineWidth = k.alert ? 1.6 : 1.1;
-    if (!k.alert) ctx.setLineDash([5, 4]);
+    const zWyzszego = k.zrodlo && this._ivBiez && k.zrodlo !== this._ivBiez;
+    ctx.strokeStyle = k.alert ? "#26c6da" : zWyzszego ? "rgba(126,87,194,0.6)" : "rgba(38,198,218,0.5)";
+    ctx.lineWidth = k.alert ? 1.6 : 1.2;
+    if (!k.alert) ctx.setLineDash(zWyzszego ? [8, 5] : [5, 4]);
     ctx.beginPath(); ctx.moveTo(x1, yg1); ctx.lineTo(x2, yg2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(x1, yd1); ctx.lineTo(x2, yd2); ctx.stroke();
     ctx.setLineDash([]);
     if (k.dotkniecia) {
       ctx.font = "10px Segoe UI";
       ctx.fillStyle = "#26c6da";
-      ctx.fillText(`kanał ${k.kier} · ${k.dotkniecia} dotknięć`, x1 + 4, Math.min(yg1, yg2) - 5);
+      ctx.fillText(`kanał ${k.kier} · ${k.dotkniecia} dotknięć` +
+                   (k.zrodlo ? ` · ${k.zrodlo}` : ""), x1 + 4, Math.min(yg1, yg2) - 5);
     }
     ctx.fillStyle = k.alert ? "rgba(38,198,218,0.10)" : "rgba(38,198,218,0.05)";
     ctx.beginPath();
@@ -1189,11 +1191,38 @@ class ChmuraChart {
   //  2. druga krawedz to ROWNOLEGLA kopia oparta na SKUPISKU punktow po drugiej
   //     stronie (nie na pojedynczym knocie),
   //  3. wiekszosc zamkniec musi lezec w srodku; inaczej NIE RYSUJEMY nic.
-  _liczKanal() {
-    const d = this.data;
+  _liczKanal(dane = null) {
+    // ten sam kanal widziany z rozna dokladnoscia: na 1h potrzeba wiecej swiec,
+    // zeby zlapac strukture, ktora na 4h miesci sie w kilkudziesieciu
+    const d = dane || this.data;
+    let naj = null;
+    for (const okno of [120, 220, 400, 800, 1400]) {
+      if (d && okno > d.length + 100) break;
+      const k = this._kanalWOknie(okno, d);
+      if (k && (!naj || k.dotkniecia > naj.dotkniecia ||
+                (k.dotkniecia === naj.dotkniecia && k.swiec > naj.swiec))) naj = k;
+    }
+    return naj;
+  }
+
+  // Kanaly z WYZSZYCH interwalow rysowane na biezacym wykresie - trader zaznacza
+  // strukture na 1D/4H, a wchodzi precyzyjnie na nizszym. Linie sa w tej samej
+  // przestrzeni (czas, cena), wiec przenosza sie bez przeliczen.
+  setKanalyRef(zestawy) {
+    this._ref = [];
+    for (const [iv, rows] of Object.entries(zestawy || {})) {
+      if (!rows || rows.length < 60) continue;
+      const k = this._liczKanal(rows);
+      if (k) this._ref.push({ ...k, zrodlo: iv === "1day" ? "1D" : iv === "4hour" ? "4H" : iv });
+    }
+    this._odswiezKanaly();
+  }
+
+  _kanalWOknie(OKNO, dane = null) {
+    const d = dane || this.data;
     if (!d || d.length < 60) return null;
     const n = d.length;
-    const a = Math.max(0, n - 220), K = 2;
+    const a = Math.max(0, n - OKNO), K = 2;
     const ph = [], pl = [];
     for (let i = a + K; i < n - K; i++) {
       let mh = -Infinity, ml = Infinity;
@@ -1219,12 +1248,15 @@ class ChmuraChart {
           const dot = idx.filter((p) => p >= i1 && Math.abs(ex(p) - (nach * p + b)) <= tol);
           if (dot.length < 3) continue;                  // linia z 3 dotkniec, nie z dwoch
           const ost = Math.max(...dot);
-          let czysta = true;
+          // dopuszczamy pojedyncze knoty poza linia (1 na 60 swiec) - inaczej
+          // na wykresie godzinowym szum kasowalby poprawne kanaly
+          const limit = Math.max(1, Math.floor((ost - i1) / 60));
+          let naruszen = 0;
           for (let q = i1; q <= ost; q++) {
             const v = nach * q + b;
-            if (gora ? d[q].high > v + tol : d[q].low < v - tol) { czysta = false; break; }
+            if (gora ? d[q].high > v + tol : d[q].low < v - tol) naruszen++;
           }
-          if (!czysta) continue;
+          if (naruszen > limit) continue;
           const oc = dot.length * 100 + (ost - i1);
           if (!best || oc > best.oc) best = { oc, nach, b, dot: dot.length, i1 };
         }
@@ -1266,7 +1298,7 @@ class ChmuraChart {
         g1: nach * i1 + cG, g2: nach * (n - 1) + cG,
         d1: nach * i1 + cD, d2: nach * (n - 1) + cD,
         kier: nachRel > 0.0008 ? "wzrostowy" : nachRel < -0.0008 ? "spadkowy" : "boczny",
-        wys_pct: (wys / px) * 100, dotkniecia: baza.dot + naj.ile,
+        wys_pct: (wys / px) * 100, dotkniecia: baza.dot + naj.ile, swiec: n - i1,
         alert: null, lokalny: true,
       };
     }
@@ -1289,7 +1321,12 @@ class ChmuraChart {
   _odswiezKanaly() {
     if (this._kanalyOff) { this.tool.auto = []; this.tool.refresh(); return; }
     const lokalny = this._liczKanal();
-    this.tool.auto = [...(lokalny ? [lokalny] : []), ...(this._auto ?? [])];
+    const ivPl = this._iv === "1day" ? "1D" : this._iv === "4hour" ? "4H"
+               : this._iv === "60min" ? "1H" : "15m";
+    const biezacy = lokalny ? [{ ...lokalny, zrodlo: ivPl }] : [];
+    // kanaly z wyzszych interwalow - pomijamy ten, ktory juz mamy z biezacego
+    const ref = (this._ref ?? []).filter((k) => k.zrodlo !== ivPl);
+    this.tool.auto = [...biezacy, ...ref, ...(this._auto ?? [])];
     this.tool.refresh();
   }
 
@@ -1445,7 +1482,10 @@ class ChmuraChart {
   }
   // rysunki zapisywane per para i interwal - wracaja po odswiezeniu strony
   setDrawKey(symbol, interval) {
-    this._iv = interval;            // kanaly rysujemy tylko z TEGO interwalu
+    this._iv = interval;
+    this._ivBiez = interval === "1day" ? "1D" : interval === "4hour" ? "4H"
+                 : interval === "60min" ? "1H" : "15m";
+    this.tool._ivBiez = this._ivBiez;            // kanaly rysujemy tylko z TEGO interwalu
     this._drawKey = `chmura.rys.${symbol}.${interval}`;
     try {
       const raw = localStorage.getItem(this._drawKey);
@@ -1674,6 +1714,13 @@ async function loadSymbol(sym) {
   const rows = await fetchCandles(sym, state.interval);
   chart.setDrawKey(sym, state.interval);     // rysunki tej pary i interwalu wracaja
   chart.setData(rows);
+  // kanaly z wyzszych interwalow (1D i 4H) - widoczne takze na nizszych wykresach
+  Promise.all([
+    state.interval === "1day" ? Promise.resolve(rows) : fetchCandles(sym, "1day", 500),
+    state.interval === "4hour" ? Promise.resolve(rows) : fetchCandles(sym, "4hour", 700),
+  ]).then(([d1, d4]) => {
+    if (state.symbol === sym) chart.setKanalyRef({ "1day": d1, "4hour": d4 });
+  }).catch(() => { /* brak swiec wyzszego interwalu - trudno */ });
   if (rows.length) setHeaderPrice(rows[rows.length - 1].close);
   state.signals = await fetchSignals(sym);
   state.delist = await fetchDelistings(sym);
