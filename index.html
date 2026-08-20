@@ -113,7 +113,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-0815";</script></head>
+<script>window.CHMURA_BUILD="20.08-0837";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -795,6 +795,11 @@ class ToolPrimitive {
     ctx.beginPath(); ctx.moveTo(x1, yg1); ctx.lineTo(x2, yg2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(x1, yd1); ctx.lineTo(x2, yd2); ctx.stroke();
     ctx.setLineDash([]);
+    if (k.dotkniecia) {
+      ctx.font = "10px Segoe UI";
+      ctx.fillStyle = "#26c6da";
+      ctx.fillText(`kanał ${k.kier} · ${k.dotkniecia} dotknięć`, x1 + 4, Math.min(yg1, yg2) - 5);
+    }
     ctx.fillStyle = k.alert ? "rgba(38,198,218,0.10)" : "rgba(38,198,218,0.05)";
     ctx.beginPath();
     ctx.moveTo(x1, yg1); ctx.lineTo(x2, yg2); ctx.lineTo(x2, yd2); ctx.lineTo(x1, yd1);
@@ -1178,54 +1183,94 @@ class ChmuraChart {
 
   // Kanal z ostatnich 60 swiec, liczony na miejscu - dzieki temu widac go zawsze,
   // a nie tylko wtedy, gdy chmura zapisala zdarzenie. Progi luzniejsze niz alertowe.
+  // KANAL metoda klasyczna (zrodla: Tradeciety, TradingView, Navia):
+  //  1. linia bazowa laczy MIN. 3 punkty zwrotne i nie jest przez cene przebijana
+  //     (do ostatniego dotkniecia - pozniejsze wyjscie to juz wybicie, nie blad),
+  //  2. druga krawedz to ROWNOLEGLA kopia oparta na SKUPISKU punktow po drugiej
+  //     stronie (nie na pojedynczym knocie),
+  //  3. wiekszosc zamkniec musi lezec w srodku; inaczej NIE RYSUJEMY nic.
   _liczKanal() {
     const d = this.data;
-    if (!d || d.length < 45) return null;
+    if (!d || d.length < 60) return null;
     const n = d.length;
-    let best = null;
-    // probujemy kilku dlugosci okna i wybieramy kanal, ktorego krawedzie
-    // NAJCZESCIEJ dotykaja swiec - tak jak rysuje sie kanal recznie
-    for (const W of [40, 60, 90, 120, 160, 220]) {
-      if (n < W + 2) break;
-      const a = n - W, i2 = n - 1;
-      // nachylenie z regresji po zamknieciach (odporne na pojedyncze knoty)
-      let sx = 0, sy = 0;
-      for (let j = a; j <= i2; j++) { sx += j; sy += d[j].close; }
-      const mx = sx / W, my = sy / W;
-      let num = 0, den = 0;
-      for (let j = a; j <= i2; j++) { num += (j - mx) * (d[j].close - my); den += (j - mx) ** 2; }
-      const nach = den === 0 ? 0 : num / den;
-      // krawedzie jako OBWIEDNIA: przesuwamy linie tak, by dotknely skrajnych swiec
-      let gornaC = -Infinity, dolnaC = Infinity;
-      for (let j = a; j <= i2; j++) {
-        gornaC = Math.max(gornaC, d[j].high - nach * j);
-        dolnaC = Math.min(dolnaC, d[j].low - nach * j);
-      }
-      const wys = gornaC - dolnaC;
-      const px = d[i2].close;
-      if (!(wys > 0) || wys / px < 0.03 || wys / px > 1.2) continue;
-      // ile swiec realnie dotyka krawedzi (w promieniu 8% wysokosci kanalu)
-      let dot = 0;
-      for (let j = a; j <= i2; j++) {
-        const g = nach * j + gornaC, dd = nach * j + dolnaC;
-        if (d[j].high >= g - 0.08 * wys || d[j].low <= dd + 0.08 * wys) dot++;
-      }
-      // premia za dluzszy kanal: dluzszy = wazniejszy, gdy dotkniec podobnie
-      const ocena = dot / Math.sqrt(W) + W / 2000;
-      if (!best || ocena > best.ocena) {
-        best = { ocena, a, i2, nach, gornaC, dolnaC, wys, px, dot, W };
-      }
+    const a = Math.max(0, n - 220), K = 2;
+    const ph = [], pl = [];
+    for (let i = a + K; i < n - K; i++) {
+      let mh = -Infinity, ml = Infinity;
+      for (let q = i - K; q <= i + K; q++) { mh = Math.max(mh, d[q].high); ml = Math.min(ml, d[q].low); }
+      if (d[i].high === mh) ph.push(i);
+      if (d[i].low === ml) pl.push(i);
     }
-    if (!best || best.dot < 6) return null;
-    const { a, i2, nach, gornaC, dolnaC, wys, px } = best;
-    const nachRel = nach / px;
-    return {
-      t1: d[a].time, t2: d[i2].time,
-      g1: nach * a + gornaC, g2: nach * i2 + gornaC,
-      d1: nach * a + dolnaC, d2: nach * i2 + dolnaC,
-      kier: nachRel > 0.0008 ? "wzrostowy" : nachRel < -0.0008 ? "spadkowy" : "boczny",
-      wys_pct: (wys / px) * 100, alert: null, lokalny: true,
+    if (ph.length < 2 || pl.length < 2) return null;
+    const zak = d.slice(a).map((r) => r.high - r.low).sort((x, y) => x - y);
+    const med = zak[zak.length >> 1] || 0;
+    const px = d[n - 1].close;
+    const tol = Math.max(0.4 * med, 0.003 * px);
+
+    const bazowa = (idx, gora) => {
+      const ex = (i) => (gora ? d[i].high : d[i].low);
+      let best = null;
+      for (let x = 0; x < idx.length - 1; x++) {
+        for (let y = x + 1; y < idx.length; y++) {
+          const i1 = idx[x], i2 = idx[y];
+          if (i2 - i1 < 10) continue;
+          const nach = (ex(i2) - ex(i1)) / (i2 - i1);
+          const b = ex(i1) - nach * i1;
+          const dot = idx.filter((p) => p >= i1 && Math.abs(ex(p) - (nach * p + b)) <= tol);
+          if (dot.length < 3) continue;                  // linia z 3 dotkniec, nie z dwoch
+          const ost = Math.max(...dot);
+          let czysta = true;
+          for (let q = i1; q <= ost; q++) {
+            const v = nach * q + b;
+            if (gora ? d[q].high > v + tol : d[q].low < v - tol) { czysta = false; break; }
+          }
+          if (!czysta) continue;
+          const oc = dot.length * 100 + (ost - i1);
+          if (!best || oc > best.oc) best = { oc, nach, b, dot: dot.length, i1 };
+        }
+      }
+      return best;
     };
+
+    for (const goraBaza of [true, false]) {
+      const baza = bazowa(goraBaza ? ph : pl, goraBaza);
+      if (!baza) continue;
+      const { nach, b, i1 } = baza;
+      // rownolegla po drugiej stronie: przesuniecie ze SKUPISKA punktow zwrotnych
+      const idx2 = goraBaza ? pl : ph;
+      const ex2 = (i) => (goraBaza ? d[i].low : d[i].high);
+      const kand = idx2.filter((p) => p >= i1).map((p) => ex2(p) - nach * p);
+      if (kand.length < 2) continue;
+      let naj = null;
+      for (const cc of kand) {
+        const ile = kand.filter((c2) => Math.abs(c2 - cc) <= tol).length;
+        const poza = kand.filter((c2) => (goraBaza ? c2 < cc - tol : c2 > cc + tol)).length;
+        const oc = ile * 100 - poza;
+        if (!naj || oc > naj.oc) naj = { oc, cc, ile };
+      }
+      if (!naj || naj.ile < 2) continue;
+      const cG = goraBaza ? b : naj.cc;
+      const cD = goraBaza ? naj.cc : b;
+      const wys = cG - cD;
+      if (!(wys > 0) || wys / px < 0.03 || wys / px > 0.8) continue;
+      let w = 0, ile = 0;
+      for (let q = i1; q < n; q++) {
+        const g = nach * q + cG, dd = nach * q + cD;
+        if (d[q].close <= g + tol && d[q].close >= dd - tol) w++;
+        ile++;
+      }
+      if (w / ile < 0.80) continue;                      // cena musi RESPEKTOWAC kanal
+      const nachRel = nach / px;
+      return {
+        t1: d[i1].time, t2: d[n - 1].time,
+        g1: nach * i1 + cG, g2: nach * (n - 1) + cG,
+        d1: nach * i1 + cD, d2: nach * (n - 1) + cD,
+        kier: nachRel > 0.0008 ? "wzrostowy" : nachRel < -0.0008 ? "spadkowy" : "boczny",
+        wys_pct: (wys / px) * 100, dotkniecia: baza.dot + naj.ile,
+        alert: null, lokalny: true,
+      };
+    }
+    return null;
   }
 
   togglePoziomy() {
@@ -1750,6 +1795,7 @@ $("btn-usun-zazn").addEventListener("click", (e) => {
   odswiezPasek();
 });
 $("btn-refresh").addEventListener("click", () => loadSymbol(state.symbol));
+window.CHMURA_CHART = chart;   // uchwyt do diagnostyki (konsola przegladarki)
 const ustawMotyw = (jasny) => {
   document.body.classList.toggle("jasny", jasny);
   localStorage.setItem("chmura.motyw", jasny ? "jasny" : "ciemny");
