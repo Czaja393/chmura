@@ -113,7 +113,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-0905";</script></head>
+<script>window.CHMURA_BUILD="20.08-0929";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -148,6 +148,7 @@
     <button class="tool-btn" id="btn-ruler" title="dwa klikniecia: zmierz % miedzy punktami">Miarka %</button>
     <button class="tool-btn" id="btn-signals">Sygnały</button>
     <button class="tool-btn" id="btn-formacje">Formacje</button>
+    <button class="tool-btn" id="btn-sciany" title="duże zlecenia w arkuszu">Ściany</button>
     <button class="tool-btn" id="btn-delist">Delisting</button>
     <button class="tool-btn" id="btn-news">Newsy</button>
     <button class="tool-btn" id="btn-refresh">Odśwież</button>
@@ -203,7 +204,14 @@
     </div>
   </div>
   <div id="right">
-    <div class="panel"><h3>Arkusz (live)</h3><div id="book" class="muted">łączenie…</div></div>
+    <div class="panel"><h3>Arkusz (live)
+      <select id="book-depth" title="ile poziomów arkusza pokazywać"
+        style="float:right;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;padding:1px 4px">
+        <option value="12">12</option><option value="25">25</option>
+        <option value="50" selected>50</option><option value="100">100</option>
+        <option value="150">150</option>
+      </select></h3>
+      <div id="book" class="muted" style="max-height:46vh;overflow-y:auto">łączenie…</div></div>
     <div class="panel calc">
       <h3>Kalkulator płynności i prowizji</h3>
       <label>Kierunek</label>
@@ -447,6 +455,14 @@ async function fetchFormacje(tylkoZPrzewaga = true) {
   return tylkoZPrzewaga ? out.filter((r) => r.d.alert) : out;
 }
 
+// SCIANY w arkuszu wykryte przez skaner (ostatnia doba)
+async function fetchSciany(symbol = null) {
+  const od = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  return rest(`book_walls?ts=gte.${od}` + (symbol ? `&symbol=eq.${symbol}` : "") +
+              `&select=ts,symbol,side,price,usd,krotnosc,pct_vol24,dist_pct,price_at` +
+              `&order=pct_vol24.desc&limit=200`);
+}
+
 async function fetchDelistings(symbol) {
   return rest(`announcements?kind=eq.delisting&symbol_hits=cs.{${symbol}}` +
               `&select=source,title,published_at,seen_at&order=seen_at.desc&limit=20`);
@@ -566,9 +582,11 @@ class HtxFeed {
     this.ws.onmessage = (e) => {
       const m = JSON.parse(pako.inflate(new Uint8Array(e.data), { to: "string" }));
       if (m.ping) { this._send({ pong: m.ping }); return; }
+      // odpowiedz na zadanie migawki arkusza (pelny stan 150 poziomow)
+      if (m.rep && m.rep.includes(".depth.") && m.data) { this.onDepth(m.rep, m.data, true); return; }
       if (!m.ch || !m.tick) return;
       if (m.ch.includes(".kline.")) this.onKline(m.ch, m.tick);
-      else if (m.ch.includes(".depth.")) this.onDepth(m.ch, m.tick);
+      else if (m.ch.includes(".depth.")) this.onDepth(m.ch, m.tick, false);
       else if (m.ch.endsWith(".detail")) this.onDetail(m.ch, m.tick);
     };
   }
@@ -578,9 +596,17 @@ class HtxFeed {
   // przelacza subskrypcje na nowy symbol/interwal (unsub starych)
   watch(symbol, htxPeriod) {
     for (const s of this.subs) this._send({ unsub: s });
+    // Arkusz: subskrypcja oddaje tylko okolo 35 poziomow, ale ZADANIE migawki
+    // (req) na tym samym kanale zwraca pelne 150 - wiec dociagamy je co 2 sekundy,
+    // a subskrypcja odswieza czubek arkusza pomiedzy migawkami.
+    this.symbol = symbol;
     this.subs = [`market.${symbol}.kline.${htxPeriod}`, `market.${symbol}.depth.step0`,
                  `market.${symbol}.detail`];
     if (this.alive) this.subs.forEach((s) => this._send({ sub: s }));
+    clearInterval(this._migawka);
+    const pobierz = () => this._send({ req: `market.${this.symbol}.depth.step0`, id: "arkusz" });
+    pobierz();
+    this._migawka = setInterval(pobierz, 2000);
   }
 }
 
@@ -725,6 +751,7 @@ class ToolPrimitive {
       renderer: () => ({
         draw: (target) => target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
           this._poziomy(ctx, mediaSize);
+          this._sciany(ctx, mediaSize);
           for (const f of (this.formacje ?? [])) this._formacja(ctx, f, mediaSize);
           for (const k of (this.auto ?? [])) this._kanalAuto(ctx, k);
           this.drawings.forEach((d, idx) => {
@@ -776,6 +803,24 @@ class ToolPrimitive {
       ctx.fillStyle = `rgb(${kolor})`;
       ctx.fillText(`${p.typ === "opor" ? "opór" : "wsparcie"} ${fp(p.price)} (${p.dotkniecia}x)`,
                    6, y - 3);
+    }
+    ctx.restore();
+  }
+
+  _sciany(ctx, mediaSize) {
+    const w = mediaSize?.width ?? 9999;
+    ctx.save();
+    ctx.font = "10px Segoe UI";
+    for (const s of (this.sciany ?? [])) {
+      const y = this._s.priceToCoordinate(s.price);
+      if (y === null) continue;
+      const kolor = s.side === "kupno" ? "38,166,154" : "239,83,80";
+      ctx.strokeStyle = `rgba(${kolor},0.75)`;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(w * 0.72, y); ctx.lineTo(w - 64, y); ctx.stroke();
+      ctx.fillStyle = `rgb(${kolor})`;
+      ctx.fillText(`ściana ${s.side} ${Math.round(s.usd / 1000)} tys. $ (${s.pct.toFixed(0)}% obrotu)`,
+                   w * 0.72, y - 4);
     }
     ctx.restore();
   }
@@ -1349,6 +1394,14 @@ class ChmuraChart {
     return null;
   }
 
+  // SCIANY z arkusza: gruba pozioma kreska na poziomie duzego zlecenia
+  setSciany(lista) {
+    this.tool.sciany = (lista || []).map((w) => ({
+      price: +w.price, side: w.side, usd: +w.usd, pct: +w.pct_vol24,
+    }));
+    this.tool.refresh();
+  }
+
   togglePoziomy() {
     this._srOn = !this._srOn;
     this.tool.levels = this._srOn ? this._liczPoziomy() : [];
@@ -1549,6 +1602,27 @@ class ChmuraChart {
 const fmtP = (p) => (p >= 1 ? p.toFixed(4) : p.toPrecision(5));
 const fmtN = (v) => Math.round(v).toLocaleString("pl-PL");
 
+// Doklejanie zmian arkusza: aktualizuje poziomy, usuwa te z iloscia 0
+// i trzyma sortowanie (kupno malejaco, sprzedaz rosnaco).
+function scalPoziomy(stare, zmiany, rosnaco) {
+  if (!zmiany || !zmiany.length) return stare;
+  const mapa = new Map(stare.map(([p, q]) => [p, q]));
+  const skraj = rosnaco ? Math.max(...zmiany.map(([p]) => +p))
+                       : Math.min(...zmiany.map(([p]) => +p));
+  // w zasiegu przyslanej czesci arkusza obowiazuje to, co przyszlo:
+  // poziomy, ktorych juz nie ma, znikaja (ktos je zdjal albo zostaly zjedzone)
+  for (const cena of [...mapa.keys()]) {
+    if (rosnaco ? cena <= skraj : cena >= skraj) mapa.delete(cena);
+  }
+  for (const [p, q] of zmiany) {
+    const cena = +p, ilosc = +q;
+    if (ilosc > 0) mapa.set(cena, ilosc);
+  }
+  return [...mapa.entries()]
+    .sort((a, b) => (rosnaco ? a[0] - b[0] : b[0] - a[0]))
+    .slice(0, 150);
+}
+
 class OrderBook {
   constructor(bookEl, calcEls) {
     this.el = bookEl; this.c = calcEls;
@@ -1558,14 +1632,25 @@ class OrderBook {
     this.c.mode.addEventListener("change", () => this.recalc());
   }
 
-  update(tick) {
-    this.bids = (tick.bids || []).map(([p, q]) => [+p, +q]);
-    this.asks = (tick.asks || []).map(([p, q]) => [+p, +q]);
+  update(tick, pelny = false) {
+    const nowe = {
+      bids: (tick.bids || []).map(([p, q]) => [+p, +q]),
+      asks: (tick.asks || []).map(([p, q]) => [+p, +q]),
+    };
+    if (pelny || !this.bids.length) {
+      this.bids = nowe.bids;
+      this.asks = nowe.asks;
+    } else {
+      // czubek arkusza z subskrypcji: odswieza pierwsze poziomy, ale NIE obcina
+      // glebszej czesci pobranej migawka
+      this.bids = scalPoziomy(this.bids, nowe.bids, false);
+      this.asks = scalPoziomy(this.asks, nowe.asks, true);
+    }
     this.render();
     this.recalc();
   }
 
-  render(depth = 12) {
+  render(depth = this.glebokosc ?? 12) {
     if (!this.bids.length) { this.el.textContent = "brak danych arkusza"; return; }
     const maxQ = Math.max(...this.asks.slice(0, depth).map(([, q]) => q),
                           ...this.bids.slice(0, depth).map(([, q]) => q));
@@ -1696,9 +1781,9 @@ const feed = new HtxFeed({
     chart.updateLast(tick);
     setHeaderPrice(tick.close);
   },
-  onDepth: (ch, tick) => {
+  onDepth: (ch, tick, pelny) => {
     if (!ch.includes(`market.${state.symbol}.`)) return;
-    book.update(tick);
+    book.update(tick, pelny);
   },
   onDetail: (ch, tick) => {
     // kroczacy wolumen 24h z tickera HTX - identyczny z tym, co pokazuje gielda
@@ -1767,6 +1852,9 @@ async function loadSymbol(sym) {
   }).catch(() => { /* brak swiec wyzszego interwalu - trudno */ });
   if (rows.length) setHeaderPrice(rows[rows.length - 1].close);
   state.signals = await fetchSignals(sym);
+  fetchSciany(sym).then((w) => {
+    if (state.symbol === sym) chart.setSciany(w);
+  }).catch(() => { /* brak scian - nic nie rysujemy */ });
   state.delist = await fetchDelistings(sym);
   chart.setMarkersAll(state.signals, state.delist);
   renderSignalsPanel();
@@ -2003,6 +2091,41 @@ async function pokazFormacje() {
   if (b) b.addEventListener("click", () => { formacjeWszystkie = !formacjeWszystkie; pokazFormacje(); });
 }
 $("btn-formacje").addEventListener("click", pokazFormacje);
+
+// --- ŚCIANY w arkuszu: duże zlecenia wykryte przez skaner ---
+$("book-depth").addEventListener("change", (e) => {
+  book.glebokosc = Number(e.target.value);
+  book.render();
+});
+book.glebokosc = 50;
+
+const STRONA_PL = { kupno: "kupno (podpórka)", sprzedaz: "sprzedaż (sufit)" };
+async function pokazSciany() {
+  openModal("Ściany w arkuszu", `<div class="muted">ładowanie…</div>`);
+  const w = await fetchSciany();
+  const rows = w.map((r) => `
+    <tr data-goto="${r.symbol}" style="cursor:pointer;border-bottom:1px solid #2a2e3955">
+      <td style="padding:4px 8px">${plDate(r.ts, false)} ${String(r.ts).slice(11, 16)}</td>
+      <td style="padding:4px 8px"><b>${r.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
+      <td style="padding:4px 8px;color:${r.side === "kupno" ? "#26a69a" : "#ef5350"}">${STRONA_PL[r.side] ?? r.side}</td>
+      <td style="padding:4px 8px">${fmtPx(+r.price)}</td>
+      <td style="padding:4px 8px">${fmtVolPl(+r.usd)}</td>
+      <td style="padding:4px 8px">${(+r.pct_vol24).toFixed(1)}%</td>
+      <td style="padding:4px 8px">${(+r.krotnosc).toFixed(0)}×</td>
+      <td style="padding:4px 8px" class="muted">${(+r.dist_pct).toFixed(1)}%</td>
+    </tr>`).join("");
+  openModal(`Ściany w arkuszu — ostatnia doba (${w.length})`,
+    `<table style="width:100%;border-collapse:collapse;font-size:12px">
+      <tr class="muted"><th style="text-align:left;padding:4px 8px">kiedy</th>
+      <th style="text-align:left;padding:4px 8px">coin</th><th style="text-align:left;padding:4px 8px">strona</th>
+      <th style="text-align:left;padding:4px 8px">cena</th><th style="text-align:left;padding:4px 8px">wartość</th>
+      <th style="text-align:left;padding:4px 8px">% obrotu</th><th style="text-align:left;padding:4px 8px">× arkusz</th>
+      <th style="text-align:left;padding:4px 8px">od ceny</th></tr>${rows}</table>
+     <p class="muted" style="margin-top:8px">Ściana = pojedyncze zlecenie co najmniej 6× większe od typowego
+     poziomu w arkuszu i warte ponad 3% dziennego obrotu, stojące do 4% od ceny. Skan co 10 minut, rotacyjnie
+     po całej giełdzie. To OBSERWACJA, nie sygnał — zbieramy dane, żeby sprawdzić, czy ściany coś zapowiadają.</p>`);
+}
+$("btn-sciany").addEventListener("click", pokazSciany);
 
 // --- zlecenia (Etap 2): draft w apce -> TAK/NIE w Telegramie -> egzekutor ---
 const ORDER_ST = { draft: "czeka na TAK w Telegramie", armed: "uzbrojone", running: "w trakcie",
