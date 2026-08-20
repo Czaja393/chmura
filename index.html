@@ -103,7 +103,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="19.08-2040";</script></head>
+<script>window.CHMURA_BUILD="20.08-0704";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -964,6 +964,8 @@ class ChmuraChart {
     for (const s of signals) {
       const mk = KIND_MARK[s.kind];
       if (!mk) continue;
+      // kanal wykryty na innym interwale nie ma sensu na tym wykresie
+      if (String(s.kind).startsWith("kanal_") && s.kind !== `kanal_${this._iv}`) continue;
       const t = snap(Math.floor(Date.parse(s.ts) / 1000));
       if (t === null) continue;
       marks.push({ time: t, position: mk.shape === "arrowDown" ? "aboveBar" : "belowBar",
@@ -976,7 +978,7 @@ class ChmuraChart {
     // KANALY wykryte przez system - rysowane jako linie, osobno od recznych rysunkow
     this._auto = [];
     for (const s of signals) {
-      if (!String(s.kind).startsWith("kanal_")) continue;
+      if (s.kind !== `kanal_${this._iv}`) continue;
       let d = s.detail;
       if (typeof d === "string") { try { d = JSON.parse(d); } catch (_e) { continue; } }
       if (!d || !d.t1 || !d.t2) continue;
@@ -1065,6 +1067,7 @@ class ChmuraChart {
   }
   // rysunki zapisywane per para i interwal - wracaja po odswiezeniu strony
   setDrawKey(symbol, interval) {
+    this._iv = interval;            // kanaly rysujemy tylko z TEGO interwalu
     this._drawKey = `chmura.rys.${symbol}.${interval}`;
     try {
       const raw = localStorage.getItem(this._drawKey);
