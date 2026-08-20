@@ -63,7 +63,9 @@
   aside { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
   aside input { margin: 8px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
   #symbol-list { overflow-y: auto; flex: 1; }
-  .sym-row { display: flex; align-items: center; gap: 6px; padding: 5px 12px; cursor: pointer; }
+  /* wiersz pary to link, zeby Ctrl+klik i srodkowy przycisk otwieraly nowa karte */
+  .sym-row { display: flex; align-items: center; gap: 6px; padding: 5px 12px; cursor: pointer;
+    text-decoration: none; color: inherit; }
   .sym-row:hover { background: #F5F5F30D; }
   .sym-row.active { background: #E3F50A14; box-shadow: inset 2px 0 0 var(--accent); }
   .sym-row .sym-meta { margin-left: auto; color: var(--muted); font-size: 11px;
@@ -181,7 +183,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-1801";</script></head>
+<script>window.CHMURA_BUILD="20.08-1831";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -232,13 +234,14 @@
       <button class="tool-btn" id="btn-m-listy">Listy ▾</button>
       <div class="menu" id="m-listy">
         <div class="menu-tyt">Co znalazł system</div>
-        <button class="menu-poz" id="btn-signals">⚡ Sygnały</button>
-        <button class="menu-poz" id="btn-formacje">📐 Formacje</button>
-        <button class="menu-poz" id="btn-sciany">📖 Ściany w arkuszu</button>
+        <button class="menu-poz" id="btn-signals">Sygnały (FALA, BUDUJ…)</button>
+        <button class="menu-poz" id="btn-formacje">Formacje i ścisk</button>
+        <button class="menu-poz" id="btn-lista-ichimoku">Chmura Ichimoku</button>
+        <button class="menu-poz" id="btn-sciany">Ściany w arkuszu</button>
         <div class="menu-tyt">Moje</div>
-        <button class="menu-poz" id="btn-obserwacje">👁 Obserwacje</button>
-        <button class="menu-poz" id="btn-alarmy">🔔 Alarmy cenowe</button>
-        <button class="menu-poz" id="btn-notatnik">📝 Notatnik</button>
+        <button class="menu-poz" id="btn-obserwacje">Obserwacje</button>
+        <button class="menu-poz" id="btn-alarmy">Alarmy cenowe</button>
+        <button class="menu-poz" id="btn-notatnik">Notatnik</button>
         <div class="menu-tyt">Rynek</div>
         <button class="menu-poz" id="btn-delist">Delistingi</button>
         <button class="menu-poz" id="btn-news">Newsy</button>
@@ -263,6 +266,7 @@
   <aside>
     <input id="search" placeholder="Szukaj pary… (np. fun)">
     <div style="padding:0 12px" class="muted"><label><input type="checkbox" id="only-fav"> tylko obserwowane ★</label></div>
+    <div style="padding:0 12px" class="muted"><label title="to, co faktycznie masz na koncie HTX"><input type="checkbox" id="only-poz"> otwarte pozycje <span id="poz-ile"></span></label></div>
     <div id="list-opts" class="muted">
       <label title="pokaż też pary z wolumenem poniżej 200 tys. $"><input type="checkbox" id="show-all"> pokaż wszystkie</label>
       <button class="tool-btn" id="btn-sort" title="kolejność listy">Wolumen ↓</button>
@@ -517,7 +521,9 @@ function signalPrice(detail) {
 // sygnaly LIVE (od startu systemu 2026-08-11) + wyniki z trackera
 async function fetchLiveSignals() {
   const sigs = await rest(
-    `signals?ts=gte.2026-08-11T00:00:00Z&kind=not.in.(awake,grupa_a,kanal_1day,kanal_4hour,kanal_60min,dno_1day,dno_4hour,dno_60min)` +
+    `signals?ts=gte.2026-08-11T00:00:00Z&kind=not.in.(awake,grupa_a,`
+    + `kanal_1day,kanal_4hour,kanal_60min,dno_1day,dno_4hour,dno_60min,`
+    + `ichimoku_1day,ichimoku_4hour,ichimoku_60min,scisk_60min,scisk_4hour)` +
     `&select=id,ts,symbol,kind,strength,detail&order=ts.desc&limit=500`);
   if (!sigs.length) return [];
   const ids = sigs.map((s) => s.id).join(",");
@@ -543,8 +549,30 @@ async function fetchDailyVolumes() {
 async function fetchFormacje(tylkoZPrzewaga = true) {
   const rows = await rest(
     `signals?kind=in.(kanal_1day,kanal_4hour,kanal_60min,dno_1day,dno_4hour,dno_60min,`
-    + `ichimoku_1day,ichimoku_4hour,ichimoku_60min)` +
+    + `scisk_60min,scisk_4hour)` +
     `&select=id,ts,symbol,kind,strength,detail&order=ts.desc&limit=400`);
+  const out = rows.map((r) => {
+    let dd = r.detail;
+    if (typeof dd === "string") { try { dd = JSON.parse(dd); } catch (_e) { dd = {}; } }
+    return { ...r, d: dd || {} };
+  });
+  return tylkoZPrzewaga ? out.filter((r) => r.d.alert) : out;
+}
+
+// PORTFEL: co faktycznie mamy na koncie HTX (odswiezane cronem co 5 minut)
+async function fetchPortfel() {
+  try {
+    return await rest("portfel?select=waluta,symbol,ile,usd,ts&order=usd.desc");
+  } catch (_e) {
+    return [];        // brak klucza albo brak tabeli - lista po prostu bedzie pusta
+  }
+}
+
+// CHMURA ICHIMOKU - osobny folder, bo to inna rodzina sygnalow niz kanaly
+async function fetchIchimoku(tylkoZPrzewaga = true) {
+  const rows = await rest(
+    `signals?kind=in.(ichimoku_1day,ichimoku_4hour,ichimoku_60min)` +
+    `&select=id,ts,symbol,kind,strength,detail&order=ts.desc&limit=300`);
   const out = rows.map((r) => {
     let dd = r.detail;
     if (typeof dd === "string") { try { dd = JSON.parse(dd); } catch (_e) { dd = {}; } }
@@ -813,6 +841,13 @@ function miejscaPoPrzecinku(v) {
 const fp = (v) => (Number.isFinite(v) ? v.toFixed(miejscaPoPrzecinku(v)) : "—");
 
 // Wypelniona chmura Ichimoku
+// cena w podpisach: bez notacji wykladniczej, z liczba miejsc dobrana do rzedu wielkosci
+function cenaKr(v) {
+  if (!Number.isFinite(v) || v <= 0) return "-";
+  const d = v >= 100 ? 2 : v >= 1 ? 4 : v >= 0.01 ? 5 : v >= 0.0001 ? 7 : 9;
+  return v.toFixed(d).replace(/0+$/, "").replace(/\.$/, "");
+}
+
 class CloudPrimitive {
   constructor(chart, series, getSpans) { this._c = chart; this._s = series; this._get = getSpans; }
   updateAllViews() {}
@@ -1062,10 +1097,36 @@ class ToolPrimitive {
     ctx.setLineDash(k.wBudowie ? [2, 3] : st.kreska);
     ctx.beginPath(); ctx.moveTo(x1, yg1); ctx.lineTo(x2, yg2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(x1, yd1); ctx.lineTo(x2, yd2); ctx.stroke();
+
+    // PROJEKCJA W PRZYSZLOSC: kanal wystaje poza ostatnia swiece, zeby od razu bylo
+    // widac, gdzie beda krawedzie za kilkanascie swiec - bez wyobrazania sobie tego.
+    // Ceny liczymy z nachylenia linii, dopiero potem zamieniamy na piksele, wiec
+    // dziala tak samo na skali liniowej i logarytmicznej.
+    const F = 0.28;                                     // wysuniecie: 28% dlugosci kanalu
+    const g3 = k.g2 + (k.g2 - k.g1) * F, d3 = k.d2 + (k.d2 - k.d1) * F;
+    const x3 = x2 + (x2 - x1) * F;
+    const yg3 = this._s.priceToCoordinate(g3), yd3 = this._s.priceToCoordinate(d3);
+    if (yg3 !== null && yd3 !== null && x3 > x2) {
+      ctx.setLineDash([2, 4]);
+      ctx.lineWidth = swoj ? 1.4 : 1.0;
+      ctx.strokeStyle = `rgba(${kolor},${swoj ? 0.65 : 0.35})`;
+      ctx.beginPath(); ctx.moveTo(x2, yg2); ctx.lineTo(x3, yg3); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x2, yd2); ctx.lineTo(x3, yd3); ctx.stroke();
+      ctx.setLineDash([]);
+      // pionowa kreska konca projekcji + ceny obu krawedzi wypisane wprost
+      ctx.strokeStyle = `rgba(${kolor},${swoj ? 0.45 : 0.22})`;
+      ctx.beginPath(); ctx.moveTo(x3, yg3); ctx.lineTo(x3, yd3); ctx.stroke();
+      if (swoj) {
+        ctx.font = "10px 'DejaVu Sans Mono', Consolas, monospace";
+        ctx.fillStyle = `rgb(${kolor})`;
+        ctx.textAlign = "left";
+        ctx.fillText(cenaKr(g3), x3 + 4, yg3 + 3);
+        ctx.fillText(cenaKr(d3), x3 + 4, yd3 + 3);
+      }
+    }
     ctx.setLineDash([]);
     if (k.dotkniecia) {
-      ctx.font = "10px Segoe UI";
-      ctx.fillStyle = "#26c6da";
+      ctx.font = "10px 'DejaVu Sans Mono', Consolas, monospace";
       // podpis przy PRAWYM koncu kanalu, w kolorze jego linii - przy kilku
       // kanalach naraz podpisy nie nachodza na siebie
       ctx.fillStyle = `rgb(${kolor})`;
@@ -2023,7 +2084,8 @@ const fmtVolPl = (v) => {
 
 
 const $ = (id) => document.getElementById(id);
-const state = { symbol: "funusdt", interval: "1day", symbols: [], fav: new Set(), signals: [],
+const state = { symbol: "funusdt", interval: "1day", symbols: [], fav: new Set(),
+                poz: new Map(), signals: [],
                 vols: new Map(), lastPx: {}, sort: "vol-desc" };
 
 const chart = new ChmuraChart($("chart"));
@@ -2101,6 +2163,10 @@ async function loadSymbol(sym) {
   const rows = await fetchCandles(sym, state.interval);
   chart.setDrawKey(sym, state.interval);     // rysunki tej pary i interwalu wracaja
   chart.setData(rows);
+  // adres odzwierciedla to, co widac - link da sie skopiowac, a Wstecz dziala
+  const chce = `?coin=${sym}&iv=${state.interval}`;
+  if (location.search !== chce) history.replaceState({ sym }, "", chce);
+  document.title = `${sym.toUpperCase().replace(/USDT$/, "")} · Chmura`;
   odswiezLicznik();
   if (typeof odswiezMenuZapisz === "function") odswiezMenuZapisz();
   // kanaly z wyzszych interwalow (1D i 4H) - widoczne takze na nizszych wykresach
@@ -2135,14 +2201,17 @@ async function loadSymbol(sym) {
 function renderList() {
   const q = $("search").value.trim().toLowerCase();
   const onlyFav = $("only-fav").checked;
+  const onlyPoz = $("only-poz").checked;
   const showAll = $("show-all").checked;
   const volsReady = state.vols.size > 0;
   const volOf = (sym) => state.vols.get(sym)?.vol ?? 0;
   let items = state.symbols
-    .filter((s) => (!q || s.symbol.includes(q)) && (!onlyFav || state.fav.has(s.symbol)));
+    .filter((s) => (!q || s.symbol.includes(q)) && (!onlyFav || state.fav.has(s.symbol))
+                && (!onlyPoz || state.poz.has(s.symbol)));
   // domyslnie chowamy male wolumeny; ★ zawsze widoczne; wracaja same gdy wolumen > prog
   if (volsReady && !showAll)
-    items = items.filter((s) => state.fav.has(s.symbol) || volOf(s.symbol) >= PROG_WOLUMENU);
+    items = items.filter((s) => state.fav.has(s.symbol) || state.poz.has(s.symbol)
+                            || volOf(s.symbol) >= PROG_WOLUMENU);
   if (state.sort === "alpha") items.sort((a, b) => a.symbol.localeCompare(b.symbol));
   else if (volsReady) items.sort((a, b) => state.sort === "vol-asc"
     ? volOf(a.symbol) - volOf(b.symbol) : volOf(b.symbol) - volOf(a.symbol));
@@ -2151,11 +2220,13 @@ function renderList() {
     const v = state.vols.get(s.symbol);
     const px = state.lastPx[s.symbol] ?? v?.close;
     return `
-    <div class="sym-row ${s.symbol === state.symbol ? "active" : ""}" data-sym="${s.symbol}">
+    <a class="sym-row ${s.symbol === state.symbol ? "active" : ""}" data-sym="${s.symbol}"
+       href="?coin=${s.symbol}" title="Ctrl+klik lub środkowy przycisk = nowa karta">
       <span>${s.symbol.toUpperCase().replace(/USDT$/, "")}</span>
-      <span class="sym-meta"><span data-px="${s.symbol}">${px != null && Number.isFinite(px) ? fmtPx(px) : "—"}</span> · ${fmtVolPl(v?.vol)}</span>
+      <span class="sym-meta">${state.poz.has(s.symbol)
+        ? `<b style="color:var(--akcent-tekst)">${fmtVolPl(state.poz.get(s.symbol).usd)}</b> · ` : ""}<span data-px="${s.symbol}">${px != null && Number.isFinite(px) ? fmtPx(px) : "—"}</span> · ${fmtVolPl(v?.vol)}</span>
       <span class="star ${state.fav.has(s.symbol) ? "fav" : ""}" data-star="${s.symbol}">★</span>
-    </div>`;
+    </a>`;
   }).join("");
 }
 
@@ -2176,11 +2247,34 @@ $("symbol-list").addEventListener("click", async (e) => {
     renderList();
     return;
   }
-  const sym = e.target.closest(".sym-row")?.dataset.sym;
-  if (sym) loadSymbol(sym);
+  const wiersz = e.target.closest(".sym-row");
+  if (!wiersz) return;
+  // Ctrl/Cmd/Shift albo srodkowy przycisk: nie przechwytujemy, niech przegladarka
+  // otworzy nowa karte tak jak wszedzie indziej
+  if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return;
+  e.preventDefault();
+  loadSymbol(wiersz.dataset.sym);
 });
 $("search").addEventListener("input", renderList);
 $("only-fav").addEventListener("change", renderList);
+$("only-poz").addEventListener("change", renderList);
+
+// OTWARTE POZYCJE: stan konta z HTX, zapisywany przez kolektor co 5 minut
+async function loadPortfel() {
+  const lista = await fetchPortfel();
+  state.poz = new Map(lista.filter((p) => p.symbol).map((p) => [p.symbol, p]));
+  const ile = state.poz.size;
+  const et = $("poz-ile");
+  if (et) et.textContent = ile ? `(${ile})` : "";
+  const chk = $("only-poz");
+  if (chk) {
+    chk.disabled = ile === 0;
+    chk.parentElement.title = ile
+      ? "to, co faktycznie masz na koncie HTX"
+      : "pusto - dopiero po wgraniu klucza HTX z prawem odczytu";
+  }
+  renderList();
+}
 $("show-all").addEventListener("change", renderList);
 const SORT_LABEL = { "vol-desc": "Wolumen ↓", "vol-asc": "Wolumen ↑", "alpha": "A–Z" };
 $("btn-sort").addEventListener("click", () => {
@@ -2313,7 +2407,8 @@ $("btn-signals").addEventListener("click", async () => {
 // --- zakladka FORMACJE: kanaly i kolejne wzorce, osobno od sygnalow wolumenowych ---
 const IV_PL = { kanal_1day: "1D", kanal_4hour: "4H", kanal_60min: "1H",
                 dno_1day: "1D", dno_4hour: "4H", dno_60min: "1H",
-                ichimoku_1day: "1D", ichimoku_4hour: "4H", ichimoku_60min: "1H" };
+                ichimoku_1day: "1D", ichimoku_4hour: "4H", ichimoku_60min: "1H",
+                scisk_60min: "1H", scisk_4hour: "4H" };
 const TYP_PL = {
   przy_gornej: "przy górnej krawędzi", przy_dolnej: "przy dolnej krawędzi",
   wybicie_gora: "wybicie górą", wybicie_dol: "zejście dołem",
@@ -2328,6 +2423,11 @@ function opisFormacji(r) {
     return { formacja: d.typ === "podwojne_dno" ? "podwójne dno" : "podwójny szczyt",
              zdarzenie: d.kierunek === "ostrzezenie" ? "⚠ pułapka na byki" : "wybicie szyi",
              miara: d.wys_pct != null ? Number(d.wys_pct).toFixed(0) + "%" : "—" };
+  }
+  if (k.startsWith("scisk_")) {
+    return { formacja: "ścisk",
+             zdarzenie: d.alert ? "ktoś pochłania podaż" : "cena stoi",
+             miara: d.zasieg_pct != null ? Number(d.zasieg_pct).toFixed(2) + "%" : "—" };
   }
   if (k.startsWith("ichimoku_")) {
     const ostrz = typeof d.alert === "string" && d.alert.startsWith("PULAPKA");
@@ -2371,6 +2471,46 @@ async function pokazFormacje() {
   if (b) b.addEventListener("click", () => { formacjeWszystkie = !formacjeWszystkie; pokazFormacje(); });
 }
 $("btn-formacje").addEventListener("click", pokazFormacje);
+
+// --- CHMURA ICHIMOKU: wlasny folder, nie miesza sie z FALA/BUDUJ ani z kanalami ---
+let ichiWszystkie = false;
+async function pokazIchimoku() {
+  openModal("Ichimoku", `<div class="muted">ładowanie…</div>`);
+  const f = await fetchIchimoku(!ichiWszystkie);
+  const rows = f.map((r) => {
+    const ostrz = typeof r.d.alert === "string" && r.d.alert.startsWith("PULAPKA");
+    const kier = r.d.typ === "wyjscie_gora" ? "górą" : r.d.typ === "wyjscie_dol" ? "dołem"
+               : r.d.typ === "wejscie_z_gory" ? "w chmurę z góry" : "w chmurę z dołu";
+    return `
+    <tr data-goto="${r.symbol}" style="cursor:pointer;border-bottom:1px solid var(--border)">
+      <td style="padding:4px 8px">${plDate(r.ts)}</td>
+      <td style="padding:4px 8px"><b>${r.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
+      <td style="padding:4px 8px">${IV_PL[r.kind] ?? r.kind}</td>
+      <td style="padding:4px 8px">${ostrz ? "⚠ " : ""}${kier}</td>
+      <td style="padding:4px 8px">${r.d.grubosc_pct != null ? Number(r.d.grubosc_pct).toFixed(1) + "%" : "—"}</td>
+      <td style="padding:4px 8px;color:${!r.d.alert ? "var(--muted)" : ostrz ? "var(--red)" : "var(--green)"}">
+        ${!r.d.alert ? "informacja" : ostrz ? "nie kupuj" : "przewaga"}</td>
+      <td style="padding:4px 8px;white-space:nowrap">${przyciskiList(r.symbol)}</td>
+    </tr>`; }).join("");
+  openModal(`Ichimoku (${f.length})`,
+    `<div style="margin-bottom:8px">
+      <button class="tool-btn" id="btn-ichi-filtr" style="border:1px solid var(--border)">
+        ${ichiWszystkie ? "pokaż tylko z przewagą" : "pokaż wszystkie wykryte"}</button>
+     </div>
+     <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <tr class="muted"><th style="text-align:left;padding:4px 8px">data</th>
+      <th style="text-align:left;padding:4px 8px">coin</th><th style="text-align:left;padding:4px 8px">interwał</th>
+      <th style="text-align:left;padding:4px 8px">wyjście</th><th style="text-align:left;padding:4px 8px">grubość chmury</th>
+      <th style="text-align:left;padding:4px 8px">status</th>
+      <th style="text-align:left;padding:4px 8px">do listy</th></tr>${rows}</table>
+     <p class="muted" style="margin-top:8px">Decyduje <b>grubość chmury</b>, nie kierunek wybicia.
+     Na 1H i 4H wyjście <b>dołem</b> z grubej chmury to sygnał kupna (+11,8 do +17,6 pkt przewagi).
+     Wyjście <b>górą</b> z grubej chmury historycznie kończyło się spadkiem (−10 do −14 pkt).
+     Na 1D odwrotnie: działa wyjście górą, ale tylko z <b>cienkiej</b> chmury (+14,3 pkt).</p>`);
+  const b = document.getElementById("btn-ichi-filtr");
+  if (b) b.addEventListener("click", () => { ichiWszystkie = !ichiWszystkie; pokazIchimoku(); });
+}
+$("btn-lista-ichimoku") && $("btn-lista-ichimoku").addEventListener("click", pokazIchimoku);
 
 // --- ŚCIANY w arkuszu: duże zlecenia wykryte przez skaner ---
 $("book-depth").addEventListener("change", (e) => {
@@ -2713,11 +2853,26 @@ $("main").addEventListener("click", () => {
   right.classList.remove("open");
 });
 
+// wykres dostepny z konsoli - ulatwia diagnoze, nic nie zmienia w dzialaniu
+window.__chart = chart;
+
 (async function init() {
+  // adres decyduje, co pokazac - dzieki temu link z nowej karty otwiera wlasciwy coin
+  const par = new URLSearchParams(location.search);
+  const zAdresu = (par.get("coin") || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const ivAdres = par.get("iv");
+  if (zAdresu) state.symbol = zAdresu;
+  if (["15min", "60min", "4hour", "1day"].includes(ivAdres)) {
+    state.interval = ivAdres;
+    document.querySelectorAll(".iv-btn, #iv-mobile button").forEach((x) =>
+      x.classList.toggle("active", x.dataset.iv === ivAdres));
+  }
   state.symbols = await fetchSymbols();
   state.fav = await fetchWatchlist();
   renderList();
   loadVolumes();                              // ceny + wolumen na liscie (bez blokowania startu)
+  loadPortfel();                              // co mamy na koncie HTX
+  setInterval(loadPortfel, 5 * 60 * 1000);
   setInterval(loadVolumes, 5 * 60 * 1000);    // odswiezanie co 5 minut
   await loadSymbol(state.symbol);
 })();
