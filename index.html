@@ -16,6 +16,11 @@
     --bg: #131722; --panel: #1e222d; --border: #2a2e39; --text: #d1d4dc;
     --muted: #787b86; --green: #26a69a; --red: #ef5350; --accent: #2962ff;
   }
+  /* jasny motyw - wlaczany przyciskiem, zapamietywany miedzy wizytami */
+  body.jasny {
+    --bg: #ffffff; --panel: #f4f6f9; --border: #d6dae2; --text: #1b2028;
+    --muted: #6b7280; --green: #0f9d84; --red: #d84b47; --accent: #1d5fd8;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font: 13px/1.45 "Segoe UI", system-ui, sans-serif; height: 100vh; overflow: hidden; }
   #layout { display: grid; grid-template-columns: 240px 1fr 300px; grid-template-rows: 44px 26px 1fr; height: 100vh; }
@@ -108,7 +113,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-0711";</script></head>
+<script>window.CHMURA_BUILD="20.08-0730";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -134,6 +139,7 @@
         <label style="display:block;padding:2px"><input type="checkbox" data-ma="EMA26"> EMA 26</label>
       </div>
     </div>
+    <button class="tool-btn" id="btn-motyw" title="jasny / ciemny motyw">🌗</button>
     <button class="tool-btn" id="btn-kanaly" title="kanały wykryte przez system">Kanały</button>
     <button class="tool-btn" id="btn-sr" title="wsparcia i opory z historii wykresu">Wsparcia/Opory</button>
     <button class="tool-btn" id="btn-ichimoku">Ichimoku</button>
@@ -571,6 +577,14 @@ const HTX_PERIOD = { "15min": "15min", "60min": "60min", "4hour": "4hour", "1day
 
 
 
+// kolor z motywu (CSS) - dzieki temu wykres zmienia sie razem z reszta aplikacji
+function kolorCss(nazwa, awaryjny) {
+  try {
+    const v = getComputedStyle(document.body).getPropertyValue(nazwa).trim();
+    return v || awaryjny;
+  } catch (_e) { return awaryjny; }
+}
+
 const KIND_MARK = {
   flush:               { color: "#26a69a", shape: "arrowUp",   text: "OKAZJA" },
   retrace_opportunity: { color: "#2962ff", shape: "arrowUp",   text: "BUDUJ" },
@@ -693,7 +707,11 @@ class ToolPrimitive {
         draw: (target) => target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
           this._poziomy(ctx, mediaSize);
           for (const k of (this.auto ?? [])) this._kanalAuto(ctx, k);
-          for (const d of this.drawings) this._one(ctx, d, mediaSize);
+          this.drawings.forEach((d, idx) => {
+            if (idx === this.sel) { ctx.save(); ctx.shadowColor = "#fff"; ctx.shadowBlur = 10; }
+            this._one(ctx, d, mediaSize);
+            if (idx === this.sel) ctx.restore();
+          });
           if (this.pending) this._one(ctx, { ...this.pending, c: this.preview }, mediaSize, true);
           else if (this.mode && this.p1) {
             this._one(ctx, { type: this.mode, a: this.p1, b: this.preview }, mediaSize, true);
@@ -840,7 +858,8 @@ class ChmuraChart {
   constructor(el) {
     this.el = el;
     this.chart = LightweightCharts.createChart(el, {
-      layout: { background: { color: "#131722" }, textColor: "#d1d4dc" },
+      layout: { background: { color: kolorCss("--bg", "#131722") },
+                textColor: kolorCss("--text", "#d1d4dc") },
       grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
       crosshair: { mode: 0 },
       timeScale: { timeVisible: true, borderColor: "#2a2e39" },
@@ -873,6 +892,15 @@ class ChmuraChart {
     this._dragging = false;
     this._capturedId = null;
     el.addEventListener("pointerdown", (e) => {
+      if (!this.tool.mode && !this.tool.pending && this.tool.drawings.length) {
+        // klik w rysunek = zaznaczenie (do usuniecia koszem albo klawiszem Delete)
+        const idx = this._trafiony(e);
+        if (idx !== null || this.tool.sel != null) {
+          this.tool.sel = idx;
+          this.tool.refresh();
+          if (this._onSel) this._onSel(idx !== null);
+        }
+      }
       if (!this.tool.mode || this._dragging) return;      // drugi palec nie psuje rysowania
       if (e.button != null && e.button !== 0) return;     // tylko lewy przycisk / palec
       e.preventDefault();
@@ -1016,7 +1044,7 @@ class ChmuraChart {
       this._auto.push({ t1: d.t1, t2: d.t2, g1: +d.g1, g2: +d.g2, d1: +d.d1, d2: +d.d2,
                         kier: d.kier, alert: d.alert });
     }
-    if (this.tool) this.tool.auto = this._kanalyOff ? [] : this._auto;
+    this._odswiezKanaly();
     if (this._srOn) this.tool.levels = this._liczPoziomy();
     for (const d of delistings || []) {
       const t = snap(Math.floor(Date.parse(d.published_at || d.seen_at) / 1000));
@@ -1061,6 +1089,52 @@ class ChmuraChart {
       .slice(0, 8);
   }
 
+  // Kanal z ostatnich 60 swiec, liczony na miejscu - dzieki temu widac go zawsze,
+  // a nie tylko wtedy, gdy chmura zapisala zdarzenie. Progi luzniejsze niz alertowe.
+  _liczKanal() {
+    const d = this.data;
+    const OKNO = 60, K = 2;
+    if (!d || d.length < OKNO + K + 2) return null;
+    const n = d.length, i = n - 1, a = Math.max(0, i - OKNO + 1);
+    const gr = [], dl = [];
+    for (let j = a; j <= i - K; j++) {
+      let maxH = -Infinity, minL = Infinity;
+      if (j < K || j >= n - K) continue;
+      for (let q = j - K; q <= j + K; q++) { maxH = Math.max(maxH, d[q].high); minL = Math.min(minL, d[q].low); }
+      if (d[j].high === maxH) gr.push(j);
+      if (d[j].low === minL) dl.push(j);
+    }
+    if (gr.length < 3 || dl.length < 3) return null;
+    const fit = (idx, sel) => {
+      const mx = idx.reduce((x, y) => x + y, 0) / idx.length;
+      const my = idx.reduce((x, j) => x + sel(d[j]), 0) / idx.length;
+      let num = 0, den = 0;
+      for (const j of idx) { num += (j - mx) * (sel(d[j]) - my); den += (j - mx) ** 2; }
+      const k = den === 0 ? 0 : num / den;
+      return [k, my - k * mx];
+    };
+    const [ug, bg] = fit(gr, (r) => r.high);
+    const [ud, bd] = fit(dl, (r) => r.low);
+    const gora = ug * i + bg, dol = ud * i + bd, wys = gora - dol;
+    const px = d[i].close;
+    if (wys <= 0 || wys / px < 0.04 || wys / px > 0.8) return null;   // do ogladania: od 4%
+    if (Math.abs(ug - ud) / wys > 0.6) return null;                   // krawedzie ~rownolegle
+    let w = 0, ile = 0;
+    for (let j = a; j <= i; j++) {
+      const g = ug * j + bg, dd = ud * j + bd, tol = 0.12 * wys;
+      if (d[j].close <= g + tol && d[j].close >= dd - tol) w++;
+      ile++;
+    }
+    if (w / ile < 0.75) return null;                                  // do ogladania: od 75%
+    const nach = ((ug + ud) / 2) / px;
+    return {
+      t1: d[a].time, t2: d[i].time,
+      g1: ug * a + bg, g2: gora, d1: ud * a + bd, d2: dol,
+      kier: nach > 0.001 ? "wzrostowy" : nach < -0.001 ? "spadkowy" : "boczny",
+      wys_pct: (wys / px) * 100, alert: null, lokalny: true,
+    };
+  }
+
   togglePoziomy() {
     this._srOn = !this._srOn;
     this.tool.levels = this._srOn ? this._liczPoziomy() : [];
@@ -1070,9 +1144,26 @@ class ChmuraChart {
 
   toggleKanaly() {
     this._kanalyOff = !this._kanalyOff;
-    this.tool.auto = this._kanalyOff ? [] : (this._auto ?? []);
-    this.tool.refresh();
+    this._odswiezKanaly();
     return !this._kanalyOff;
+  }
+
+  _odswiezKanaly() {
+    if (this._kanalyOff) { this.tool.auto = []; this.tool.refresh(); return; }
+    const lokalny = this._liczKanal();
+    this.tool.auto = [...(lokalny ? [lokalny] : []), ...(this._auto ?? [])];
+    this.tool.refresh();
+  }
+
+  // przemalowanie wykresu po zmianie motywu
+  odswiezMotyw() {
+    this.chart.applyOptions({
+      layout: { background: { color: kolorCss("--bg", "#131722") },
+                textColor: kolorCss("--text", "#d1d4dc") },
+      grid: { vertLines: { color: kolorCss("--border", "#2a2e39") },
+              horzLines: { color: kolorCss("--border", "#2a2e39") } },
+    });
+    this.tool.refresh();
   }
 
   toggleMA(key) {
@@ -1138,12 +1229,51 @@ class ChmuraChart {
     this.tool.refresh();
     this.el.style.cursor = "default";
   }
-  // gumka: bez argumentu cofa ostatni rysunek, z true czysci wszystkie
+  // gumka: usuwa ZAZNACZONY rysunek, a gdy nic nie zaznaczone - ostatni;
+  // z argumentem true czysci wszystkie
   eraseTool(wszystko = false) {
     if (wszystko) this.tool.drawings = [];
-    else this.tool.drawings.pop();
+    else if (this.tool.sel != null && this.tool.drawings[this.tool.sel]) {
+      this.tool.drawings.splice(this.tool.sel, 1);
+    } else this.tool.drawings.pop();
+    this.tool.sel = null;
     this.clearTool();
     this._saveDrawings();
+  }
+
+  // trafienie w rysunek: zwraca indeks najblizszego w promieniu ~10 px
+  _trafiony(e) {
+    const rect = this.el.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const ts = this.chart.timeScale();
+    const xy = (pt) => {
+      if (!pt) return null;
+      const x = ts.timeToCoordinate(pt.time), y = this.candles.priceToCoordinate(pt.price);
+      return (x === null || y === null) ? null : { x, y };
+    };
+    const odcinek = (A, B) => {
+      const dx = B.x - A.x, dy = B.y - A.y;
+      const t = Math.max(0, Math.min(1, ((mx - A.x) * dx + (my - A.y) * dy) / (dx * dx + dy * dy || 1)));
+      return Math.hypot(mx - (A.x + t * dx), my - (A.y + t * dy));
+    };
+    let best = null, bestD = 11;
+    this.tool.drawings.forEach((d, idx) => {
+      const A = xy(d.a), B = d.b ? xy(d.b) : null;
+      if (!A) return;
+      let dist = Infinity;
+      if (d.type === "hline") dist = Math.abs(my - A.y);
+      else if (B) {
+        dist = odcinek(A, B);
+        if (d.type === "rect") {
+          const x1 = Math.min(A.x, B.x), x2 = Math.max(A.x, B.x);
+          const y1 = Math.min(A.y, B.y), y2 = Math.max(A.y, B.y);
+          dist = Math.min(Math.abs(mx - x1), Math.abs(mx - x2), Math.abs(my - y1), Math.abs(my - y2));
+          if (mx < x1 - 10 || mx > x2 + 10 || my < y1 - 10 || my > y2 + 10) dist = Infinity;
+        }
+      }
+      if (dist < bestD) { bestD = dist; best = idx; }
+    });
+    return best;
   }
   // rysunki zapisywane per para i interwal - wracaja po odswiezeniu strony
   setDrawKey(symbol, interval) {
@@ -1482,8 +1612,16 @@ $("btn-undo").addEventListener("click", () => { chart.eraseTool(false); odswiezP
 $("btn-erase").addEventListener("click", () => { chart.eraseTool(true); odswiezPasek(); });
 $("btn-undo-m").addEventListener("click", (e) => { e.stopPropagation(); chart.eraseTool(false); odswiezPasek(); });
 $("btn-refresh").addEventListener("click", () => loadSymbol(state.symbol));
+const ustawMotyw = (jasny) => {
+  document.body.classList.toggle("jasny", jasny);
+  localStorage.setItem("chmura.motyw", jasny ? "jasny" : "ciemny");
+  chart.odswiezMotyw();
+};
+$("btn-motyw").addEventListener("click", () => ustawMotyw(!document.body.classList.contains("jasny")));
+if (localStorage.getItem("chmura.motyw") === "jasny") ustawMotyw(true);
 $("btn-sr").addEventListener("click", (e) => e.target.classList.toggle("active", chart.togglePoziomy()));
 $("btn-kanaly").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleKanaly()));
+$("btn-kanaly").classList.add("active");   // kanaly widoczne od startu
 // zwijanie listy par: stan pamietany miedzy wizytami
 const ustawListe = (schowana) => {
   $("layout").classList.toggle("bez-listy", schowana);
@@ -1499,6 +1637,7 @@ $("btn-ruler").addEventListener("click", () => chart.armTool("ruler"));
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { chart.clearTool(); odswiezPasek(); }
   if ((e.ctrlKey || e.metaKey) && e.key === "z") { chart.eraseTool(false); odswiezPasek(); }
+  if (e.key === "Delete" || e.key === "Backspace") { chart.eraseTool(false); odswiezPasek(); }
 });
 $("btn-ma").addEventListener("click", () => {
   const m = $("ma-menu");
