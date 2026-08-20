@@ -7,22 +7,39 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Chmura — wykresy</title>
+<title>CHMURA / czajka.ai</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
 <style>
+  /* ===== paleta czajka.ai: trzy kolory robia cala robote ===== */
   :root {
-    --bg: #131722; --panel: #1e222d; --border: #2a2e39; --text: #d1d4dc;
-    --muted: #787b86; --green: #26a69a; --red: #ef5350; --accent: #2962ff;
+    --bg: #0C0C0C;          /* czern - tlo calej aplikacji */
+    --panel: #1C1C1B;       /* CAP - tlo paneli i boxow */
+    --border: #363634;      /* DIM - obrysy, dividery, stan nieaktywny */
+    --text: #F5F5F3;        /* biel zarezerwowana dla glownej tresci */
+    --muted: #848480;       /* szary - opisy, drobne info */
+    --accent: #E3F50A;      /* lime - JEDYNY akcent, max 20% powierzchni */
+    --na-akcencie: #0C0C0C; /* tekst NA akcencie zawsze czarny */
+    --akcent-tekst: #E3F50A; /* akcent uzyty jako sam tekst */
+    /* kolory funkcyjne: wzrost i spadek musza byc czytelne na wykresie,
+       ale sa przygaszone, zeby lime pozostal najglosniejszy na ekranie */
+    --green: #4EC08A; --red: #E5484D;
+    --font-display: "Anton", "Arial Narrow", Impact, system-ui, sans-serif;
+    --font-mono: "DejaVu Sans Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
   }
-  /* jasny motyw - wlaczany przyciskiem, zapamietywany miedzy wizytami */
+  /* jasny motyw - ta sama tozsamosc, odwrocone tlo */
   body.jasny {
-    --bg: #ffffff; --panel: #f4f6f9; --border: #d6dae2; --text: #1b2028;
-    --muted: #6b7280; --green: #0f9d84; --red: #d84b47; --accent: #1d5fd8;
+    --bg: #F5F5F3; --panel: #FFFFFF; --border: #D8D8D4; --text: #0C0C0C;
+    --muted: #6B6B67; --accent: #E3F50A; --na-akcencie: #0C0C0C;
+    --akcent-tekst: #5E6B00;   /* lime na bieli jest nieczytelny - ciemna oliwka */
+    --green: #12876A; --red: #C93A3E;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font: 13px/1.45 "Segoe UI", system-ui, sans-serif; height: 100vh; overflow: hidden; }
+  body { background: var(--bg); color: var(--text); font: 12.5px/1.5 var(--font-mono); height: 100vh; overflow: hidden; }
   #layout { display: grid; grid-template-columns: 240px 1fr 300px; grid-template-rows: 44px 26px 1fr; height: 100vh; }
   /* zwijana lista par - wiecej miejsca na wykres i narzedzia */
   #layout.bez-listy { grid-template-columns: 0 1fr 300px; }
@@ -34,24 +51,25 @@
     background: var(--panel); border-bottom: 1px solid var(--border); color: var(--muted);
     font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
   #info-bar b { color: var(--text); font-weight: 600; }
-  header .sym { font-size: 16px; font-weight: 600; }
+  header .sym { font-family: var(--font-display); font-size: 19px; letter-spacing: .6px;
+    text-transform: uppercase; line-height: 1; }
   header .px { font-size: 16px; font-variant-numeric: tabular-nums; }
   header .chg.up { color: var(--green); } header .chg.down { color: var(--red); }
   .iv-btn, .tool-btn { background: none; border: 1px solid transparent; color: var(--muted); padding: 4px 9px; border-radius: 4px; cursor: pointer; font-size: 12px; }
   .iv-btn:hover, .tool-btn:hover { color: var(--text); }
-  .iv-btn.active { background: var(--accent); color: #fff; }
+  .iv-btn.active { background: var(--accent); color: var(--na-akcencie); }
   #live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
   #live-dot.on { background: var(--green); }
   aside { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
   aside input { margin: 8px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); }
   #symbol-list { overflow-y: auto; flex: 1; }
   .sym-row { display: flex; align-items: center; gap: 6px; padding: 5px 12px; cursor: pointer; }
-  .sym-row:hover { background: #2a2e3966; }
-  .sym-row.active { background: #2962ff22; }
+  .sym-row:hover { background: #F5F5F30D; }
+  .sym-row.active { background: #E3F50A14; box-shadow: inset 2px 0 0 var(--accent); }
   .sym-row .sym-meta { margin-left: auto; color: var(--muted); font-size: 11px;
     font-variant-numeric: tabular-nums; white-space: nowrap; }
   .sym-row .star { color: var(--muted); cursor: pointer; }
-  .sym-row .star.fav { color: #f5c518; }
+  .sym-row .star.fav { color: var(--akcent-tekst); }
   #list-opts { display: flex; align-items: center; gap: 8px; padding: 2px 12px 6px; }
   #btn-sort { border: 1px solid var(--border); margin-left: auto; padding: 2px 8px; }
   #main { position: relative; }
@@ -68,8 +86,8 @@
   .calc .out { margin-top: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-variant-numeric: tabular-nums; }
   .calc .out div { display: flex; justify-content: space-between; padding: 1px 0; }
   .calc .out .net { font-weight: 700; border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
-  .calc .warn { color: #f5c518; }
-  #signals-panel .sig { padding: 3px 0; border-bottom: 1px solid #2a2e3955; font-size: 12px; }
+  .calc .warn { color: var(--akcent-tekst); }
+  #signals-panel .sig { padding: 3px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
   .muted { color: var(--muted); }
   .only-mobile { display: none; }
   /* menu w naglowku - zamiast kilkunastu przyciskow obok siebie */
@@ -81,27 +99,55 @@
   .menu-tyt { font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
     color: var(--muted); padding: 6px 8px 3px; }
   .menu label { display: block; padding: 4px 8px; cursor: pointer; border-radius: 5px; }
-  .menu label:hover { background: #2a2e3966; }
+  .menu label:hover { background: #F5F5F312; }
   .menu-poz { display: block; width: 100%; text-align: left; background: none; border: none;
     color: var(--text); padding: 6px 8px; border-radius: 5px; cursor: pointer; font-size: 12px; }
-  .menu-poz:hover { background: #2a2e3966; }
-  .menu-poz.active { background: var(--accent); color: #fff; }
-  /* formularze w prawym panelu - czytelniejsze etykiety i odstepy */
+  .menu-poz:hover { background: #F5F5F312; color: var(--akcent-tekst); }
+  .menu-poz.active { background: var(--accent); color: var(--na-akcencie); }
+  /* ===== komponenty z brand booka ===== */
+  /* KICKER BADGE: lime kapsula + czarny tekst + letter-spacing, ALL CAPS */
+  .kick { display: inline-block; font-family: var(--font-display); font-size: 11px;
+    letter-spacing: 1.4px; text-transform: uppercase; background: var(--accent);
+    color: var(--na-akcencie); padding: 4px 10px 3px; border-radius: 999px; }
+  /* HEADLINE + UNDERLINE: Anton uppercase + lime pasek pod spodem */
+  .head { font-family: var(--font-display); font-size: 22px; letter-spacing: .5px;
+    text-transform: uppercase; color: var(--text); line-height: 1; }
+  .head::after { content: ""; display: block; width: 60px; height: 6px;
+    background: var(--accent); margin-top: 5px; }
+  /* CORNER BRACKETS: ramka w rogach kontentu */
+  .rogi { position: relative; }
+  .rogi::before, .rogi::after { content: ""; position: absolute; width: 16px; height: 16px;
+    border: 2px solid var(--accent); pointer-events: none; }
+  .rogi::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
+  .rogi::after { bottom: -1px; right: -1px; border-left: none; border-top: none; }
+  /* naglowki paneli po prawej: kicker + szara linijka opisu */
+  .panel h3 { font-size: 12px; text-transform: none; color: var(--muted);
+    margin-bottom: 8px; letter-spacing: 0; font-weight: 400; }
   .panel h3 .pod { display: block; font-size: 10px; color: var(--muted); text-transform: none;
-    letter-spacing: 0; margin-top: 2px; font-weight: 400; }
+    letter-spacing: 0; margin-top: 4px; font-weight: 400; }
+  /* licznik do zamkniecia swiecy - obok interwalow */
+  #iv-left { font-size: 11px; color: var(--akcent-tekst); letter-spacing: .5px;
+    min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; }
+  /* segregatory: jedna lista rozwijana zamiast szesciu przyciskow */
+  .lista-sel { background: var(--bg); color: var(--muted); border: 1px solid var(--border);
+    border-radius: 999px; font: 11px var(--font-mono); padding: 2px 6px; cursor: pointer; }
+  .lista-sel:hover { color: var(--akcent-tekst); border-color: var(--accent); }
+  .lista-sel:disabled { color: var(--akcent-tekst); border-color: var(--accent); opacity: 1; }
+  .menu-poz.ok { color: var(--akcent-tekst); }
+  .menu-tyt { font-family: var(--font-display); }
   .calc .grupa { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 8px; }
   .calc button.glowny { width: 100%; margin-top: 10px; padding: 9px; border-radius: 6px;
-    background: var(--accent); color: #fff; border: none; cursor: pointer; font-size: 13px; }
+    background: var(--accent); color: var(--na-akcencie); border: none; cursor: pointer; font-size: 13px; }
   .calc button.glowny:hover { filter: brightness(1.12); }
 
   #main { position: relative; }
   #rys-bar { position: absolute; left: 6px; top: 46px; z-index: 21; display: flex; flex-direction: column;
-    gap: 2px; background: var(--panel); border: 1px solid #2a2e39; border-radius: 8px; padding: 4px 3px; }
+    gap: 2px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 4px 3px; }
   #rys-bar button { background: none; border: none; color: var(--muted); font-size: 15px; line-height: 1;
     width: 30px; height: 28px; border-radius: 5px; cursor: pointer; }
-  #rys-bar button:hover { background: #2a2e39; color: var(--fg); }
-  #rys-bar button.active { background: var(--accent); color: #fff; }
-  .rys-sep { height: 1px; background: #2a2e39; margin: 3px 2px; }
+  #rys-bar button:hover { background: var(--border); color: var(--text); }
+  #rys-bar button.active { background: var(--accent); color: var(--na-akcencie); }
+  .rys-sep { height: 1px; background: var(--border); margin: 3px 2px; }
   #iv-mobile { display: none; }
 
   /* ===== MOBILE: jedna kolumna, wykres caly ekran, szuflady ===== */
@@ -109,11 +155,11 @@
     .iv-btn { display: none; }              /* interwaly przenosza sie na wykres */
     #rys-bar { display: none; }
     #iv-mobile { display: flex; position: absolute; top: 10px; left: 10px; z-index: 20;
-      gap: 6px; background: #1e222dd9; border: 1px solid var(--border);
+      gap: 6px; background: var(--panel); border: 1px solid var(--border);
       border-radius: 8px; padding: 4px; }
     #iv-mobile button { background: none; border: none; color: var(--muted);
       padding: 6px 10px; border-radius: 6px; font-size: 13px; }
-    #iv-mobile button.active { background: var(--accent); color: #fff; }
+    #iv-mobile button.active { background: var(--accent); color: var(--na-akcencie); }
     #layout { grid-template-columns: 1fr; grid-template-rows: 44px 30px 1fr; }
     header { overflow-x: auto; scrollbar-width: none; }
     header::-webkit-scrollbar { display: none; }
@@ -135,7 +181,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-1736";</script></head>
+<script>window.CHMURA_BUILD="20.08-1801";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -150,7 +196,20 @@
     <button class="iv-btn" data-iv="60min">1H</button>
     <button class="iv-btn" data-iv="4hour">4H</button>
     <button class="iv-btn active" data-iv="1day">1D</button>
+    <span id="iv-left" title="ile zostało do zamknięcia świecy">—</span>
     <span style="flex:1"></span>
+
+    <div class="menu-box">
+      <button class="tool-btn" id="btn-m-zapisz">Zapisz ▾</button>
+      <div class="menu" id="m-zapisz">
+        <div class="menu-tyt">Wrzuć ten coin do</div>
+        <div id="zapisz-listy"></div>
+        <div class="menu-tyt">Albo</div>
+        <button class="menu-poz" id="btn-zapisz-notatka">Napisz notatkę o tym coinie</button>
+        <button class="menu-poz" id="btn-zapisz-alarm">Ustaw alarm cenowy</button>
+      </div>
+    </div>
+
 
     <div class="menu-box">
       <button class="tool-btn" id="btn-m-wykres">Wykres ▾</button>
@@ -192,12 +251,12 @@
     <span id="live-dot" title="live"></span>
   </header>
   <div id="modal" style="display:none;position:fixed;inset:0;background:#000a;z-index:50">
-    <div style="max-width:820px;margin:5vh auto;background:#1e222d;border:1px solid #2a2e39;border-radius:8px;max-height:85vh;display:flex;flex-direction:column">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #2a2e39">
-        <b id="modal-title">—</b>
+    <div class="rogi" style="max-width:860px;margin:5vh auto;background:var(--panel);border:1px solid var(--border);max-height:85vh;display:flex;flex-direction:column">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px 12px;border-bottom:1px solid var(--border)">
+        <span class="head" id="modal-title">—</span>
         <button class="tool-btn" id="modal-close">✕ zamknij</button>
       </div>
-      <div id="modal-body" style="overflow-y:auto;padding:10px 14px"></div>
+      <div id="modal-body" style="overflow-y:auto;padding:14px 18px"></div>
     </div>
   </div>
   <div id="info-bar"><span class="muted">ładowanie danych coina…</span></div>
@@ -223,14 +282,14 @@
       <button id="btn-undo"  title="Cofnij ostatni rysunek">↶</button>
       <button id="btn-erase" title="Wyczyść wszystkie rysunki">🗑</button>
     </div>
-    <button id="btn-usun-zazn" style="display:none;position:absolute;z-index:24;background:#ef5350;color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">✕ usuń</button>
+    <button id="btn-usun-zazn" style="display:none;position:absolute;z-index:24;background:var(--red);color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">✕ usuń</button>
     <div id="chart"></div>
     <div id="iv-mobile">
       <button data-iv="15min">15m</button>
       <button data-iv="60min">1H</button>
       <button data-iv="4hour">4H</button>
       <button data-iv="1day" class="active">1D</button>
-      <span style="width:1px;background:#2a2e39;margin:2px 2px"></span>
+      <span style="width:1px;background:var(--border);margin:2px 2px"></span>
       <button data-tool="ruler" title="miarka: przeciągnij po wykresie">📏</button>
       <button data-tool="fibo2" title="Fibo: przeciągnij od dołka do szczytu">ƒ</button>
       <button data-tool="trend" title="linia trendu">╱</button>
@@ -242,7 +301,7 @@
     </div>
   </div>
   <div id="right">
-    <div class="panel"><h3>Arkusz (live)
+    <div class="panel"><h3><span class="kick">Arkusz live</span>
       <select id="book-depth" title="ile poziomów arkusza pokazywać"
         style="float:right;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;font-size:11px;padding:1px 4px">
         <option value="12">12</option><option value="25">25</option>
@@ -251,7 +310,7 @@
       </select></h3>
       <div id="book" class="muted" style="max-height:46vh;overflow-y:auto">łączenie…</div></div>
     <div class="panel calc">
-      <h3>Ile realnie zapłacę<span class="pod">poślizg na arkuszu + prowizje</span></h3>
+      <h3><span class="kick">Ile zapłacę</span><span class="pod">poślizg na arkuszu + prowizje</span></h3>
       <label>Co robię</label>
       <select id="c-side"><option value="sell">SPRZEDAJĘ (w market)</option><option value="buy">KUPUJĘ (w market)</option></select>
       <label>Za ile (USD)</label>
@@ -268,7 +327,7 @@
       <div class="out" id="c-out"><div class="muted">Podaj ilość — liczę po żywym arkuszu.</div></div>
     </div>
     <div class="panel calc" id="orders-panel">
-      <h3>Kup przez system<span class="pod">tworzy zlecenie, potwierdzasz w Telegramie</span></h3>
+      <h3><span class="kick">Kup przez system</span><span class="pod">tworzy zlecenie, potwierdzasz w Telegramie</span></h3>
       <label>Kwota (USD)</label>
       <input id="o-budget" type="number" placeholder="np. 500" min="1" step="any">
       <label>Sposób wejścia</label>
@@ -483,7 +542,8 @@ async function fetchDailyVolumes() {
 // FORMACJE (kanaly i kolejne wzorce) - osobna lista, zeby nie zalewaly sygnalow
 async function fetchFormacje(tylkoZPrzewaga = true) {
   const rows = await rest(
-    `signals?kind=in.(kanal_1day,kanal_4hour,kanal_60min,dno_1day,dno_4hour,dno_60min)` +
+    `signals?kind=in.(kanal_1day,kanal_4hour,kanal_60min,dno_1day,dno_4hour,dno_60min,`
+    + `ichimoku_1day,ichimoku_4hour,ichimoku_60min)` +
     `&select=id,ts,symbol,kind,strength,detail&order=ts.desc&limit=400`);
   const out = rows.map((r) => {
     let dd = r.detail;
@@ -720,9 +780,9 @@ function kolorCss(nazwa, awaryjny) {
 }
 
 const KIND_MARK = {
-  flush:               { color: "#26a69a", shape: "arrowUp",   text: "OKAZJA" },
-  retrace_opportunity: { color: "#2962ff", shape: "arrowUp",   text: "BUDUJ" },
-  exit:                { color: "#ef5350", shape: "arrowDown", text: "WYJDZ" },
+  flush:               { color: "#4EC08A", shape: "arrowUp",   text: "OKAZJA" },
+  retrace_opportunity: { color: "#E3F50A", shape: "arrowUp",   text: "BUDUJ" },
+  exit:                { color: "#E5484D", shape: "arrowDown", text: "WYJDZ" },
   wave:                { color: "#ff9800", shape: "circle",    text: "FALA" },
   grupa_b:             { color: "#ab47bc", shape: "arrowUp",   text: "GRUPA" },
   grupa_c:             { color: "#8d6e63", shape: "circle",    text: "KLIMAKS" },
@@ -736,9 +796,9 @@ const KIND_MARK = {
 };
 const MA_DEFS = {
   SMA20:  { fn: sma, n: 20,  color: "#42a5f5" },
-  SMA50:  { fn: sma, n: 50,  color: "#f5c518" },
-  SMA200: { fn: sma, n: 200, color: "#ef5350" },
-  EMA12:  { fn: ema, n: 12,  color: "#26a69a" },
+  SMA50:  { fn: sma, n: 50,  color: "#E3F50A" },
+  SMA200: { fn: sma, n: 200, color: "#E5484D" },
+  EMA12:  { fn: ema, n: 12,  color: "#4EC08A" },
   EMA26:  { fn: ema, n: 26,  color: "#ab47bc" },
 };
 // Format ceny bez notacji wykladniczej. Dla monet po 0,0000000053 zapis "5.338e-9"
@@ -1100,7 +1160,7 @@ class ToolPrimitive {
       ctx.setLineDash([4, 4]);
       ctx.beginPath(); ctx.moveTo(xa, y); ctx.lineTo(xb, y); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = "#f5c518";
+      ctx.fillStyle = "#E3F50A";
       ctx.fillText(`${lv.label}  ${fp(lv.price)}`, Math.min(xb + 6, (mediaSize?.width ?? 9999) - 90), y + 4);
     }
   }
@@ -1110,24 +1170,25 @@ class ChmuraChart {
   constructor(el) {
     this.el = el;
     this.chart = LightweightCharts.createChart(el, {
-      layout: { background: { color: kolorCss("--bg", "#131722") },
-                textColor: kolorCss("--text", "#d1d4dc") },
-      grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
+      layout: { background: { color: kolorCss("--bg", "#0C0C0C") },
+                textColor: kolorCss("--text", "#F5F5F3") },
+      grid: { vertLines: { color: kolorCss("--border", "#363634") + "55" },
+              horzLines: { color: kolorCss("--border", "#363634") + "55" } },
       crosshair: { mode: 0 },
-      timeScale: { timeVisible: true, borderColor: "#2a2e39" },
-      rightPriceScale: { borderColor: "#2a2e39" },
+      timeScale: { timeVisible: true, borderColor: kolorCss("--border", "#363634") },
+      rightPriceScale: { borderColor: kolorCss("--border", "#363634") },
       autoSize: true,
     });
     this.candles = this.chart.addCandlestickSeries({
-      upColor: "#26a69a", downColor: "#ef5350", wickUpColor: "#26a69a",
-      wickDownColor: "#ef5350", borderVisible: false,
+      upColor: "#4EC08A", downColor: "#E5484D", wickUpColor: "#4EC08A",
+      wickDownColor: "#E5484D", borderVisible: false,
       priceFormat: { type: "price", precision: 8, minMove: 1e-8 },   // dostrajane w setData
     });
     this.volume = this.chart.addHistogramSeries({
-      priceScaleId: "vol", priceFormat: { type: "volume" }, color: "#26a69a55",
+      priceScaleId: "vol", priceFormat: { type: "volume" }, color: "#4EC08A44",
     });
     this.baseline = this.chart.addLineSeries({
-      priceScaleId: "vol", color: "#f5c518", lineWidth: 1,
+      priceScaleId: "vol", color: "#E3F50A", lineWidth: 1,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     });
     this.chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
@@ -1299,7 +1360,7 @@ class ChmuraChart {
     this.data = rows;
     this.candles.setData(rows);
     this.volume.setData(rows.map((r) => ({
-      time: r.time, value: r.vol, color: r.close >= r.open ? "#26a69a55" : "#ef535055",
+      time: r.time, value: r.vol, color: r.close >= r.open ? "#4EC08A44" : "#E5484D44",
     })));
     const med = rollMedianShift1(rows.map((r) => r.vol), 30, 20);
     this.baseline.setData(rows.map((r, i) => ({ time: r.time, value: med[i] }))
@@ -1327,7 +1388,7 @@ class ChmuraChart {
     if (last && t.id === last.time) this.data[this.data.length - 1] = row;
     else this.data.push(row);
     this.candles.update({ time: row.time, open: row.open, high: row.high, low: row.low, close: row.close });
-    this.volume.update({ time: row.time, value: row.vol, color: row.close >= row.open ? "#26a69a55" : "#ef535055" });
+    this.volume.update({ time: row.time, value: row.vol, color: row.close >= row.open ? "#4EC08A44" : "#E5484D44" });
   }
 
   // znaczniki na KAZDYM interwale: sygnal (doba HTX) przyciagany do pierwszej
@@ -1605,10 +1666,10 @@ class ChmuraChart {
   // przemalowanie wykresu po zmianie motywu
   odswiezMotyw() {
     this.chart.applyOptions({
-      layout: { background: { color: kolorCss("--bg", "#131722") },
-                textColor: kolorCss("--text", "#d1d4dc") },
-      grid: { vertLines: { color: kolorCss("--border", "#2a2e39") },
-              horzLines: { color: kolorCss("--border", "#2a2e39") } },
+      layout: { background: { color: kolorCss("--bg", "#0C0C0C") },
+                textColor: kolorCss("--text", "#F5F5F3") },
+      grid: { vertLines: { color: kolorCss("--border", "#363634") },
+              horzLines: { color: kolorCss("--border", "#363634") } },
     });
     this.tool.refresh();
   }
@@ -1639,8 +1700,8 @@ class ChmuraChart {
       const s = this.chart.addLineSeries({ color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
       s.setData(data); this.ichSeries.push(s);
     };
-    mk("#2962ff", ich.tenkan); mk("#b71c1c", ich.kijun);
-    mk("#26a69a88", ich.spanA); mk("#ef535088", ich.spanB); mk("#78909c", ich.chikou);
+    mk("#E3F50A", ich.tenkan); mk("#848480", ich.kijun);
+    mk("#4EC08A55", ich.spanA); mk("#E5484D55", ich.spanB); mk("#848480", ich.chikou);
     this._cloud = new CloudPrimitive(this.chart, this.candles, () => this._spans);
     this.candles.attachPrimitive(this._cloud);
     return true;
@@ -1652,7 +1713,7 @@ class ChmuraChart {
     }
     const t0 = this.data[Math.max(0, this.data.length - 180)]?.time, t1 = this.data[this.data.length - 1]?.time;
     for (const lv of fiboLevels(this.data, 180)) {
-      const s = this.chart.addLineSeries({ color: "#f5c51888", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: true, title: `Fibo ${lv.label}`, crosshairMarkerVisible: false });
+      const s = this.chart.addLineSeries({ color: "#E3F50A66", lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: true, title: `Fibo ${lv.label}`, crosshairMarkerVisible: false });
       s.setData([{ time: t0, value: lv.price }, { time: t1, value: lv.price }]);
       this.fibSeries.push(s);
     }
@@ -1846,7 +1907,7 @@ class OrderBook {
     const row = (p, q, cls) => `
       <div class="row ${cls}">
         <span class="p">${fmtP(p)}</span><span>${fmtN(q)}</span><span>${fmtN(p * q)} $</span>
-        <span class="bar" style="width:${(q / maxQ) * 100}%;background:${cls === "ask" ? "#ef5350" : "#26a69a"}"></span>
+        <span class="bar" style="width:${(q / maxQ) * 100}%;background:${cls === "ask" ? "var(--red)" : "var(--green)"}"></span>
       </div>`;
     const spread = this.asks[0][0] - this.bids[0][0];
     const spreadPct = (spread / this.asks[0][0]) * 100;
@@ -1923,7 +1984,7 @@ class OrderBook {
         const entryFee = cost * feePct;
         const pnl = net - cost - entryFee;
         L.push(`<div><span>Koszt wejścia (z prowizją)</span><span>${fmtN(cost + entryFee)} $</span></div>`);
-        L.push(`<div class="net"><span>ZYSK/STRATA</span><span style="color:${pnl >= 0 ? "#26a69a" : "#ef5350"}">${pnl >= 0 ? "+" : ""}${fmtN(pnl)} $ (${((pnl / (cost + entryFee)) * 100).toFixed(1)}%)</span></div>`);
+        L.push(`<div class="net"><span>ZYSK/STRATA</span><span style="color:${pnl >= 0 ? "var(--green)" : "var(--red)"}">${pnl >= 0 ? "+" : ""}${fmtN(pnl)} $ (${((pnl / (cost + entryFee)) * 100).toFixed(1)}%)</span></div>`);
       }
     } else {
       L.push(`<div class="net"><span>ZAPŁACISZ ŁĄCZNIE</span><span>${fmtN(-net)} $</span></div>`);
@@ -2040,6 +2101,8 @@ async function loadSymbol(sym) {
   const rows = await fetchCandles(sym, state.interval);
   chart.setDrawKey(sym, state.interval);     // rysunki tej pary i interwalu wracaja
   chart.setData(rows);
+  odswiezLicznik();
+  if (typeof odswiezMenuZapisz === "function") odswiezMenuZapisz();
   // kanaly z wyzszych interwalow (1D i 4H) - widoczne takze na nizszych wykresach
   Promise.all([
     state.interval === "1day" ? Promise.resolve(rows) : fetchCandles(sym, "1day", 500),
@@ -2225,10 +2288,10 @@ $("btn-signals").addEventListener("click", async () => {
   const fmt = (v) => v == null ? "—" : `${v >= 0 ? "+" : ""}${Number(v).toFixed(1)}%`;
   const rows = sigs.map((s) => {
     const r = s.review;
-    const col = r && r.ret_now_pct != null ? (r.ret_now_pct >= 0 ? "#26a69a" : "#ef5350") : "#787b86";
+    const col = r && r.ret_now_pct != null ? (r.ret_now_pct >= 0 ? "var(--green)" : "var(--red)") : "var(--muted)";
     const oc = r?.outcome === "profit" ? " ✅+20%" : r?.outcome === "stop" ? " ⛔-20%" : "";
     const px = signalPrice(s.detail);
-    return `<tr data-goto="${s.symbol}" style="cursor:pointer;border-bottom:1px solid #2a2e3955">
+    return `<tr data-goto="${s.symbol}" style="cursor:pointer;border-bottom:1px solid var(--border)">
       <td style="padding:4px 8px">${plDate(s.ts)}</td>
       <td style="padding:4px 8px"><b>${s.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
       <td style="padding:4px 8px">${KIND_PL[s.kind] ?? s.kind}</td>
@@ -2249,32 +2312,49 @@ $("btn-signals").addEventListener("click", async () => {
 
 // --- zakladka FORMACJE: kanaly i kolejne wzorce, osobno od sygnalow wolumenowych ---
 const IV_PL = { kanal_1day: "1D", kanal_4hour: "4H", kanal_60min: "1H",
-                dno_1day: "1D", dno_4hour: "4H", dno_60min: "1H" };
+                dno_1day: "1D", dno_4hour: "4H", dno_60min: "1H",
+                ichimoku_1day: "1D", ichimoku_4hour: "4H", ichimoku_60min: "1H" };
 const TYP_PL = {
   przy_gornej: "przy górnej krawędzi", przy_dolnej: "przy dolnej krawędzi",
   wybicie_gora: "wybicie górą", wybicie_dol: "zejście dołem",
   retest_gora: "retest górnej", retest_dol: "retest dolnej",
+  wyjscie_gora: "wyjście górą z chmury", wyjscie_dol: "wyjście dołem z chmury",
+  wejscie_z_gory: "wejście w chmurę z góry", wejscie_z_dolu: "wejście w chmurę z dołu",
 };
+// jeden opis wiersza dla trzech rodzin formacji - bez zagniezdzonych warunkow w szablonie
+function opisFormacji(r) {
+  const k = String(r.kind), d = r.d || {};
+  if (k.startsWith("dno_")) {
+    return { formacja: d.typ === "podwojne_dno" ? "podwójne dno" : "podwójny szczyt",
+             zdarzenie: d.kierunek === "ostrzezenie" ? "⚠ pułapka na byki" : "wybicie szyi",
+             miara: d.wys_pct != null ? Number(d.wys_pct).toFixed(0) + "%" : "—" };
+  }
+  if (k.startsWith("ichimoku_")) {
+    const ostrz = typeof d.alert === "string" && d.alert.startsWith("PULAPKA");
+    return { formacja: "chmura Ichimoku",
+             zdarzenie: (ostrz ? "⚠ " : "") + (TYP_PL[d.typ] ?? d.typ ?? "—"),
+             miara: d.grubosc_pct != null ? Number(d.grubosc_pct).toFixed(1) + "%" : "—" };
+  }
+  return { formacja: "kanał " + (d.kier ?? "?"),
+           zdarzenie: TYP_PL[d.typ] ?? d.typ ?? "—",
+           miara: d.wys_pct != null ? Number(d.wys_pct).toFixed(0) + "%" : "—" };
+}
 let formacjeWszystkie = false;
 async function pokazFormacje() {
   openModal("Formacje", `<div class="muted">ładowanie…</div>`);
   const f = await fetchFormacje(!formacjeWszystkie);
-  const rows = f.map((r) => `
-    <tr data-goto="${r.symbol}" style="cursor:pointer;border-bottom:1px solid #2a2e3955">
+  const rows = f.map((r) => { const o = opisFormacji(r); return `
+    <tr data-goto="${r.symbol}" style="cursor:pointer;border-bottom:1px solid var(--border)">
       <td style="padding:4px 8px">${plDate(r.ts)}</td>
       <td style="padding:4px 8px"><b>${r.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
       <td style="padding:4px 8px">${IV_PL[r.kind] ?? r.kind}</td>
-      <td style="padding:4px 8px">${String(r.kind).startsWith("dno_")
-        ? (r.d.typ === "podwojne_dno" ? "podwójne dno" : "podwójny szczyt")
-        : "kanał " + (r.d.kier ?? "?")}</td>
-      <td style="padding:4px 8px">${String(r.kind).startsWith("dno_")
-        ? (r.d.kierunek === "ostrzezenie" ? "⚠ pułapka na byki" : "wybicie szyi")
-        : (TYP_PL[r.d.typ] ?? r.d.typ ?? "—")}</td>
-      <td style="padding:4px 8px">${r.d.wys_pct != null ? Number(r.d.wys_pct).toFixed(0) + "%" : "—"}</td>
-      <td style="padding:4px 8px;color:${r.d.alert ? "#26c6da" : "#787b86"}">${r.d.alert ? "przewaga" : "informacja"}</td>
+      <td style="padding:4px 8px">${o.formacja}</td>
+      <td style="padding:4px 8px">${o.zdarzenie}</td>
+      <td style="padding:4px 8px">${o.miara}</td>
+      <td style="padding:4px 8px;color:${r.d.alert ? "#26c6da" : "var(--muted)"}">${r.d.alert ? "przewaga" : "informacja"}</td>
       <td style="padding:4px 8px;white-space:nowrap">${przyciskiList(r.symbol)}</td>
-    </tr>`).join("");
-  openModal(`Formacje — kanały (${f.length})`,
+    </tr>`; }).join("");
+  openModal(`Formacje (${f.length})`,
     `<div style="margin-bottom:8px">
       <button class="tool-btn" id="btn-form-filtr" style="border:1px solid var(--border)">
         ${formacjeWszystkie ? "pokaż tylko z przewagą" : "pokaż wszystkie wykryte"}</button>
@@ -2283,7 +2363,7 @@ async function pokazFormacje() {
       <tr class="muted"><th style="text-align:left;padding:4px 8px">data</th>
       <th style="text-align:left;padding:4px 8px">coin</th><th style="text-align:left;padding:4px 8px">interwał</th>
       <th style="text-align:left;padding:4px 8px">formacja</th><th style="text-align:left;padding:4px 8px">zdarzenie</th>
-      <th style="text-align:left;padding:4px 8px">wysokość</th><th style="text-align:left;padding:4px 8px">status</th>
+      <th style="text-align:left;padding:4px 8px">wysokość / grubość</th><th style="text-align:left;padding:4px 8px">status</th>
       <th style="text-align:left;padding:4px 8px">do listy</th></tr>${rows}</table>
      <p class="muted" style="margin-top:8px">„Przewaga" = układ, który historycznie zarabiał (tylko takie idą na Telegram).
      „Informacja" = kanał wykryty, ale bez policzonej przewagi. Klik w wiersz = wykres coina.</p>`);
@@ -2304,11 +2384,11 @@ async function pokazSciany() {
   openModal("Ściany w arkuszu", `<div class="muted">ładowanie…</div>`);
   const w = await fetchSciany();
   const rows = w.map((r) => `
-    <tr data-goto="${r.symbol}" style="cursor:pointer;border-bottom:1px solid #2a2e3955">
+    <tr data-goto="${r.symbol}" style="cursor:pointer;border-bottom:1px solid var(--border)">
       <td style="padding:4px 8px">${plDate(r.ts, false)} ${String(r.ts).slice(11, 16)}</td>
       <td style="padding:4px 8px"><b>${r.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
       <td style="padding:4px 8px">${r.typ === "warstwa" ? `warstwa (${r.poziomow} zleceń)` : "ściana"}</td>
-      <td style="padding:4px 8px;color:${r.side === "kupno" ? "#26a69a" : "#ef5350"}">${STRONA_PL[r.side] ?? r.side}</td>
+      <td style="padding:4px 8px;color:${r.side === "kupno" ? "var(--green)" : "var(--red)"}">${STRONA_PL[r.side] ?? r.side}</td>
       <td style="padding:4px 8px">${fmtPx(+r.price)}</td>
       <td style="padding:4px 8px">${fmtVolPl(+r.usd)}</td>
       <td style="padding:4px 8px">${(+r.pct_vol24).toFixed(1)}%</td>
@@ -2332,21 +2412,26 @@ async function pokazSciany() {
 $("btn-sciany").addEventListener("click", pokazSciany);
 
 // --- MOJE LISTY: przenoszenie coinow do wlasnych kubelkow ---
-const LISTY = [["wzrost", "📈 wzrost"], ["spadek", "📉 spadek"],
-               ["boczny", "➖ boczny"], ["archiwum", "🗄 archiwum"]];
+const LISTY = [["wzrost", "wzrost"], ["spadek", "spadek"], ["boczny", "boczny"],
+               ["nuda", "nuda"], ["dzieje", "coś się dzieje"], ["archiwum", "archiwum"]];
+// szesc segregatorow nie miesci sie juz jako przyciski w wierszu - jedna lista rozwijana
 function przyciskiList(sym) {
-  return LISTY.map(([kod, etykieta]) =>
-    `<button class="tool-btn" data-lista="${kod}" data-sym="${sym}" title="przenieś do listy ${kod}"
-      style="border:1px solid var(--border);padding:1px 5px;font-size:11px">${etykieta}</button>`).join(" ");
+  return `<select class="lista-sel" data-sym="${sym}" title="wrzuć do segregatora">
+    <option value="">do listy…</option>
+    ${LISTY.map(([kod, et]) => `<option value="${kod}">${et}</option>`).join("")}
+  </select>`;
 }
 function podepnijListy(root) {
-  root.querySelectorAll("[data-lista]").forEach((b) =>
-    b.addEventListener("click", async (e) => {
+  root.querySelectorAll(".lista-sel").forEach((sel) =>
+    sel.addEventListener("change", async (e) => {
       e.stopPropagation();
-      await dodajDoListy(b.dataset.sym, b.dataset.lista);
-      b.textContent = "✓";
-      b.disabled = true;
+      if (!sel.value) return;
+      await dodajDoListy(sel.dataset.sym, sel.value);
+      sel.innerHTML = `<option>zapisane: ${LISTY.find((l) => l[0] === sel.value)[1]}</option>`;
+      sel.disabled = true;
     }));
+  root.querySelectorAll(".lista-sel").forEach((sel) =>
+    sel.addEventListener("click", (e) => e.stopPropagation()));
 }
 
 async function pokazObserwacje(lista = "wzrost") {
@@ -2357,7 +2442,7 @@ async function pokazObserwacje(lista = "wzrost") {
     return `<button class="tool-btn" data-zak="${kod}" style="border:1px solid ${kod === lista ? "var(--accent)" : "var(--border)"};margin-right:4px">${et} (${ile})</button>`;
   }).join("");
   const rows = dane.filter((r) => r.lista === lista).map((r) => `
-    <tr style="border-bottom:1px solid #2a2e3955">
+    <tr style="border-bottom:1px solid var(--border)">
       <td style="padding:4px 8px;cursor:pointer" data-goto="${r.symbol}"><b>${r.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
       <td style="padding:4px 8px" class="muted">${plDate(r.ts, false)}</td>
       <td style="padding:4px 8px" class="muted">${r.notatka ?? ""}</td>
@@ -2386,7 +2471,7 @@ async function pokazNotatnik(tylkoTenCoin = false) {
   const lista = await fetchNotatki(tylkoTenCoin ? state.symbol : null);
   const nazwaCoina = state.symbol.toUpperCase().replace(/USDT$/, "");
   const rows = lista.map((n) => `
-    <tr style="border-bottom:1px solid #2a2e3955">
+    <tr style="border-bottom:1px solid var(--border)">
       <td style="padding:5px 8px;white-space:nowrap" class="muted">${plDate(n.ts, false)}</td>
       <td style="padding:5px 8px">${n.symbol ? `<b style="cursor:pointer" data-goto="${n.symbol}">${n.symbol.toUpperCase().replace(/USDT$/, "")}</b>` : "<span class='muted'>ogólna</span>"}</td>
       <td style="padding:5px 8px">${n.tytul ? `<b>${n.tytul}</b><br>` : ""}${String(n.tresc).replace(/</g, "&lt;")}</td>
@@ -2434,6 +2519,54 @@ async function pokazNotatnik(tylkoTenCoin = false) {
 }
 $("btn-notatnik").addEventListener("click", () => pokazNotatnik(true));
 
+// --- ILE ZOSTALO DO ZAMKNIECIA SWIECY ---
+const IV_SEK = { "15min": 900, "60min": 3600, "4hour": 14400, "1day": 86400 };
+function odswiezLicznik() {
+  const el = $("iv-left");
+  if (!el) return;
+  const dur = IV_SEK[state.interval];
+  const dane = chart.data;
+  if (!dur || !dane || !dane.length) { el.textContent = "—"; el.title = ""; return; }
+  const teraz = Math.floor(Date.now() / 1000);
+  const ostatnia = dane[dane.length - 1].time;
+  // koniec biezacej swiecy odliczamy krokiem interwalu od ostatniej znanej swiecy,
+  // dzieki temu nie zgadujemy granic gieldy (HTX zamyka dzien o 16:00 UTC, nie o polnocy)
+  let koniec = ostatnia + dur;
+  if (koniec <= teraz) koniec = ostatnia + (Math.floor((teraz - ostatnia) / dur) + 1) * dur;
+  const zost = Math.max(0, koniec - teraz);
+  const g = Math.floor(zost / 3600), m = Math.floor((zost % 3600) / 60), sek = zost % 60;
+  el.textContent = g > 0 ? `${g}:${String(m).padStart(2, "0")}h` : `${m}:${String(sek).padStart(2, "0")}`;
+  el.title = "świeca zamyka się " + new Date(koniec * 1000)
+    .toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
+}
+setInterval(odswiezLicznik, 1000);
+
+// --- ZAPISZ: segregatory, notatka i alarm prosto z wykresu ---
+function odswiezMenuZapisz() {
+  const box = $("zapisz-listy");
+  if (!box) return;
+  const nazwa = state.symbol.toUpperCase().replace(/USDT$/, "");
+  box.innerHTML = LISTY.map(([kod, et]) =>
+    `<button class="menu-poz" data-zapisz="${kod}">${et}</button>`).join("");
+  box.querySelectorAll("[data-zapisz]").forEach((b) => {
+    const et = LISTY.find((l) => l[0] === b.dataset.zapisz)[1];
+    b.addEventListener("click", async () => {
+      await dodajDoListy(state.symbol, b.dataset.zapisz);
+      b.textContent = `zapisane: ${nazwa}`;
+      b.classList.add("ok");
+      setTimeout(() => { b.textContent = et; b.classList.remove("ok"); }, 1600);
+    });
+  });
+}
+$("btn-zapisz-notatka") && $("btn-zapisz-notatka").addEventListener("click", () => {
+  document.querySelectorAll(".menu").forEach((m) => m.classList.remove("open"));
+  pokazNotatnik(true);
+});
+$("btn-zapisz-alarm") && $("btn-zapisz-alarm").addEventListener("click", () => {
+  document.querySelectorAll(".menu").forEach((m) => m.classList.remove("open"));
+  pokazAlarmy();
+});
+
 // --- ALARMY CENOWE: klik na wykresie z narzędziem 🔔 zakłada alarm ---
 async function odswiezAlarmy() {
   const a = await fetchAlarmy(state.symbol).catch(() => []);
@@ -2455,7 +2588,7 @@ async function pokazAlarmy() {
   openModal("Alarmy cenowe", `<div class="muted">ładowanie…</div>`);
   const lista = await fetchAlarmy();
   const rows = lista.map((a) => `
-    <tr style="border-bottom:1px solid #2a2e3955">
+    <tr style="border-bottom:1px solid var(--border)">
       <td style="padding:4px 8px;cursor:pointer" data-goto="${a.symbol}"><b>${a.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
       <td style="padding:4px 8px">${fmtPx(+a.price)}</td>
       <td style="padding:4px 8px">${a.kierunek}</td>
@@ -2518,7 +2651,7 @@ $("btn-news").addEventListener("click", async () => {
   openModal("Newsy", `<div class="muted">ładowanie…</div>`);
   const news = await fetchNews();
   const rows = news.map((n) => `
-    <div style="padding:6px 0;border-bottom:1px solid #2a2e3955">
+    <div style="padding:6px 0;border-bottom:1px solid var(--border)">
       <a href="${n.url}" target="_blank" style="color:#d1d4dc;text-decoration:none" title="${n.title}">${n.title_pl || n.title}</a>
       <div class="muted" style="font-size:11px">${n.source} • ${n.published_at ? plDate(n.published_at) : ""}</div>
     </div>`).join("");
@@ -2537,7 +2670,7 @@ $("btn-info").addEventListener("click", async () => {
       ${d.rank ? `<div><span class="muted">Ranking kapitalizacji:</span> <b>#${d.rank}</b></div>` : ""}
       ${d.mcap ? `<div><span class="muted">Kapitalizacja:</span> <b>${Math.round(d.mcap).toLocaleString("pl-PL")} $</b></div>` : ""}
       ${d.categories.length ? `<div><span class="muted">Kategorie:</span> ${d.categories.join(", ")}</div>` : ""}
-      ${d.home ? `<div><span class="muted">Strona:</span> <a href="${d.home}" target="_blank" style="color:#2962ff">${d.home}</a></div>` : ""}
+      ${d.home ? `<div><span class="muted">Strona:</span> <a href="${d.home}" target="_blank" style="color:var(--akcent-tekst)">${d.home}</a></div>` : ""}
       <p style="margin-top:10px;white-space:pre-wrap">${d.desc ? d.desc.slice(0, 2000) : "Brak opisu."}</p>
       ${d.desc && !d.isPl ? `<p class="muted">(opis po angielsku — CoinGecko nie ma polskiej wersji dla tego coina)</p>` : ""}
     </div>`);
@@ -2548,8 +2681,8 @@ $("btn-delist").addEventListener("click", async () => {
   const anns = await fetchDelistingsAll();
   const rows = anns.map((a) => {
     const hits = (a.symbol_hits || []).map((h) =>
-      `<span data-goto="${h}" style="cursor:pointer;color:#2962ff;margin-right:6px">${h.toUpperCase().replace(/USDT$/, "")}</span>`).join("");
-    return `<div style="padding:6px 0;border-bottom:1px solid #2a2e3955">
+      `<span data-goto="${h}" style="cursor:pointer;color:var(--akcent-tekst);margin-right:6px">${h.toUpperCase().replace(/USDT$/, "")}</span>`).join("");
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--border)">
       <div><b style="color:#ff1744">[${a.source.toUpperCase()}]</b> <span class="muted">${plDate(a.published_at || a.seen_at)}</span></div>
       <div>${a.title}</div>
       <div>${hits || '<span class="muted">brak naszych par w tytule</span>'}</div>
