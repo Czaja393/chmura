@@ -113,7 +113,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-0950";</script></head>
+<script>window.CHMURA_BUILD="20.08-0957";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -149,6 +149,7 @@
     <button class="tool-btn" id="btn-signals">Sygnały</button>
     <button class="tool-btn" id="btn-formacje">Formacje</button>
     <button class="tool-btn" id="btn-sciany" title="duże zlecenia w arkuszu">Ściany</button>
+    <button class="tool-btn" id="btn-alarmy" title="Twoje alarmy cenowe">Alarmy</button>
     <button class="tool-btn" id="btn-delist">Delisting</button>
     <button class="tool-btn" id="btn-news">Newsy</button>
     <button class="tool-btn" id="btn-refresh">Odśwież</button>
@@ -180,6 +181,7 @@
       <button data-tool="hline"   title="Linia pozioma - kliknij">━</button>
       <button data-tool="channel" title="Kanał równoległy - przeciągnij, potem kliknij szerokość">▤</button>
       <button data-tool="rect"    title="Prostokąt - przeciągnij">▭</button>
+      <button data-tool="alarm"   title="Alarm cenowy - kliknij na wykresie, dostaniesz powiadomienie na Telegramie">🔔</button>
       <button data-tool="ruler"   title="Miarka % - przeciągnij">📏</button>
       <button data-tool="fibo2"   title="Fibo 2 punkty - przeciągnij od dołka do szczytu">ƒ</button>
       <span class="rys-sep"></span>
@@ -199,6 +201,7 @@
       <button data-tool="trend" title="linia trendu">╱</button>
       <button data-tool="hline" title="linia pozioma">━</button>
       <button data-tool="channel" title="kanał równoległy">▤</button>
+      <button data-tool="alarm" title="alarm cenowy">🔔</button>
       <button id="btn-undo-m" title="cofnij rysunek">↶</button>
       <button id="btn-erase-m" title="usuń zaznaczony rysunek">🗑</button>
     </div>
@@ -461,6 +464,26 @@ async function fetchSciany(symbol = null) {
   return rest(`book_walls?ts=gte.${od}` + (symbol ? `&symbol=eq.${symbol}` : "") +
               `&select=ts,symbol,side,typ,poziomow,price,usd,krotnosc,pct_vol24,dist_pct,price_at` +
               `&order=pct_vol24.desc&limit=200`);
+}
+
+// ALARMY CENOWE uzytkownika
+async function fetchAlarmy(symbol = null) {
+  return rest(`price_alerts?aktywny=is.true` + (symbol ? `&symbol=eq.${symbol}` : "") +
+              `&select=id,symbol,price,kierunek,cena_zal,notatka,created_at&order=id.desc&limit=200`);
+}
+
+async function dodajAlarm(symbol, price, kierunek, cenaZal, notatka = null) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/price_alerts`, {
+    method: "POST",
+    headers: { ...H, "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify({ symbol, price, kierunek, cena_zal: cenaZal, notatka, aktywny: true }),
+  });
+  if (!r.ok) throw new Error(`alarm: ${r.status}`);
+  return (await r.json())[0];
+}
+
+async function usunAlarm(id) {
+  await fetch(`${SUPABASE_URL}/rest/v1/price_alerts?id=eq.${id}`, { method: "DELETE", headers: H });
 }
 
 async function fetchDelistings(symbol) {
@@ -752,6 +775,7 @@ class ToolPrimitive {
         draw: (target) => target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
           this._poziomy(ctx, mediaSize);
           this._sciany(ctx, mediaSize);
+          this._alarmy(ctx, mediaSize);
           for (const f of (this.formacje ?? [])) this._formacja(ctx, f, mediaSize);
           for (const k of (this.auto ?? [])) this._kanalAuto(ctx, k);
           this.drawings.forEach((d, idx) => {
@@ -803,6 +827,24 @@ class ToolPrimitive {
       ctx.fillStyle = `rgb(${kolor})`;
       ctx.fillText(`${p.typ === "opor" ? "opór" : "wsparcie"} ${fp(p.price)} (${p.dotkniecia}x)`,
                    6, y - 3);
+    }
+    ctx.restore();
+  }
+
+  _alarmy(ctx, mediaSize) {
+    const w = mediaSize?.width ?? 9999;
+    ctx.save();
+    ctx.font = "11px Segoe UI";
+    for (const a of (this.alarmy ?? [])) {
+      const y = this._s.priceToCoordinate(a.price);
+      if (y === null) continue;
+      ctx.strokeStyle = "rgba(255,167,38,0.9)";
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([7, 4]);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w - 62, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#ffa726";
+      ctx.fillText(`🔔 alarm ${fp(a.price)} (${a.kierunek})`, 8, y - 4);
     }
     ctx.restore();
   }
@@ -1053,6 +1095,15 @@ class ChmuraChart {
       // capture: pointerup/move trafiaja do nas nawet gdy palec zjedzie z wykresu
       try { el.setPointerCapture(e.pointerId); this._capturedId = e.pointerId; }
       catch (_e) { this._capturedId = null; }
+      if (this.tool.mode === "alarm") {      // alarm cenowy: jeden klik = gotowe
+        const tp = this._toTimePrice(e);
+        this.tool.mode = null;
+        this._setPan(true);
+        this.el.style.cursor = "default";
+        if (tp && this.onAlarm) this.onAlarm(tp.price);
+        e.preventDefault();
+        return;
+      }
       if (this.tool.pending) {              // kanal: trzeci punkt ustawia szerokosc
         this.tool.drawings.push({ ...this.tool.pending, c: tp });
         this.tool.pending = null; this.tool.mode = null; this.tool.p1 = null;
@@ -1162,7 +1213,10 @@ class ChmuraChart {
     for (const key of Object.keys(this.maSeries)) this._refreshMA(key);
     if (this.ichSeries.length) { this.toggleIchimoku(); this.toggleIchimoku(); }
     this.clearTool();
-    this.chart.timeScale().fitContent();
+    // otwieramy na OSTATNICH swiecach, nie na calej historii - inaczej coin, ktory
+    // spadl np. z 1,80 do 0,08, wyswietla sie jako plaska kreska przy zerze
+    const widok = Math.min(rows.length, 200);
+    this.chart.timeScale().setVisibleLogicalRange({ from: rows.length - widok, to: rows.length + 3 });
   }
 
   updateLast(t) {
@@ -1392,6 +1446,12 @@ class ChmuraChart {
       };
     }
     return null;
+  }
+
+  // ALARMY uzytkownika: pomaranczowa linia z dzwonkiem
+  setAlarmy(lista) {
+    this.tool.alarmy = (lista || []).map((a) => ({ price: +a.price, id: a.id, kierunek: a.kierunek }));
+    this.tool.refresh();
   }
 
   // SCIANY z arkusza: gruba pozioma kreska na poziomie duzego zlecenia
@@ -1855,6 +1915,9 @@ async function loadSymbol(sym) {
   fetchSciany(sym).then((w) => {
     if (state.symbol === sym) chart.setSciany(w);
   }).catch(() => { /* brak scian - nic nie rysujemy */ });
+  fetchAlarmy(sym).then((a) => {
+    if (state.symbol === sym) chart.setAlarmy(a);
+  }).catch(() => { /* brak alarmow */ });
   state.delist = await fetchDelistings(sym);
   chart.setMarkersAll(state.signals, state.delist);
   renderSignalsPanel();
@@ -2130,6 +2193,52 @@ async function pokazSciany() {
      czy takie zlecenia coś zapowiadają.</p>`);
 }
 $("btn-sciany").addEventListener("click", pokazSciany);
+
+// --- ALARMY CENOWE: klik na wykresie z narzędziem 🔔 zakłada alarm ---
+async function odswiezAlarmy() {
+  const a = await fetchAlarmy(state.symbol).catch(() => []);
+  chart.setAlarmy(a);
+}
+chart.onAlarm = async (cena) => {
+  const teraz = state.lastPx[state.symbol] ?? cena;
+  const kierunek = cena >= teraz ? "w gore" : "w dol";
+  try {
+    await dodajAlarm(state.symbol, cena, kierunek, teraz);
+    await odswiezAlarmy();
+    odswiezPasek();
+  } catch (_e) {
+    alert("Nie udało się założyć alarmu — spróbuj ponownie.");
+  }
+};
+
+async function pokazAlarmy() {
+  openModal("Alarmy cenowe", `<div class="muted">ładowanie…</div>`);
+  const lista = await fetchAlarmy();
+  const rows = lista.map((a) => `
+    <tr style="border-bottom:1px solid #2a2e3955">
+      <td style="padding:4px 8px;cursor:pointer" data-goto="${a.symbol}"><b>${a.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
+      <td style="padding:4px 8px">${fmtPx(+a.price)}</td>
+      <td style="padding:4px 8px">${a.kierunek}</td>
+      <td style="padding:4px 8px" class="muted">założony przy ${fmtPx(+a.cena_zal)}, ${plDate(a.created_at, false)}</td>
+      <td style="padding:4px 8px"><button class="tool-btn" data-usun="${a.id}"
+        style="border:1px solid var(--border)">usuń</button></td>
+    </tr>`).join("");
+  openModal(`Alarmy cenowe (${lista.length} aktywnych)`,
+    `<table style="width:100%;border-collapse:collapse;font-size:12px">
+      <tr class="muted"><th style="text-align:left;padding:4px 8px">coin</th>
+      <th style="text-align:left;padding:4px 8px">cena alarmu</th><th style="text-align:left;padding:4px 8px">kierunek</th>
+      <th style="text-align:left;padding:4px 8px">założony</th><th></th></tr>${rows}</table>
+     <p class="muted" style="margin-top:8px">Zakładanie: wybierz narzędzie 🔔 z paska przy wykresie i kliknij
+     na wysokości ceny. Gdy cena tam dojdzie, dostaniesz wiadomość na Telegramie (sprawdzane co 2 minuty).</p>`);
+  document.querySelectorAll("#modal-body [data-usun]").forEach((b) =>
+    b.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await usunAlarm(b.dataset.usun);
+      await odswiezAlarmy();
+      pokazAlarmy();
+    }));
+}
+$("btn-alarmy").addEventListener("click", pokazAlarmy);
 
 // --- zlecenia (Etap 2): draft w apce -> TAK/NIE w Telegramie -> egzekutor ---
 const ORDER_ST = { draft: "czeka na TAK w Telegramie", armed: "uzbrojone", running: "w trakcie",
