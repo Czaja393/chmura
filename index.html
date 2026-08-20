@@ -113,7 +113,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-0847";</script></head>
+<script>window.CHMURA_BUILD="20.08-0905";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -725,6 +725,7 @@ class ToolPrimitive {
       renderer: () => ({
         draw: (target) => target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
           this._poziomy(ctx, mediaSize);
+          for (const f of (this.formacje ?? [])) this._formacja(ctx, f, mediaSize);
           for (const k of (this.auto ?? [])) this._kanalAuto(ctx, k);
           this.drawings.forEach((d, idx) => {
             if (idx === this.sel) { ctx.save(); ctx.shadowColor = "#fff"; ctx.shadowBlur = 10; }
@@ -776,6 +777,37 @@ class ToolPrimitive {
       ctx.fillText(`${p.typ === "opor" ? "opór" : "wsparcie"} ${fp(p.price)} (${p.dotkniecia}x)`,
                    6, y - 3);
     }
+    ctx.restore();
+  }
+
+  // FORMACJA podwojnego dna / szczytu: obrys "W" albo "M" + linia szyi.
+  // Zamiast kropki na wykresie widac cala formacje - tak jak sie ja rysuje recznie.
+  _formacja(ctx, f, mediaSize) {
+    const ts = this._c.timeScale();
+    const x1 = ts.timeToCoordinate(f.t1), x2 = ts.timeToCoordinate(f.t2);
+    const y1 = this._s.priceToCoordinate(f.p1), y2 = this._s.priceToCoordinate(f.p2);
+    const ysz = this._s.priceToCoordinate(f.szyja);
+    if ([x1, x2, y1, y2, ysz].some((v) => v === null)) return;
+    const dno = f.typ === "podwojne_dno";
+    const kolor = f.kierunek === "ostrzezenie" ? "239,83,80" : "255,202,40";
+    const xm = (x1 + x2) / 2;
+    ctx.save();
+    ctx.strokeStyle = `rgb(${kolor})`;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();                       // obrys formacji: ekstremum - szyja - ekstremum
+    ctx.moveTo(x1, y1); ctx.lineTo(xm, ysz); ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.setLineDash([5, 4]);               // linia szyi przedluzona w prawo
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(x1, ysz); ctx.lineTo(mediaSize?.width ?? x2 + 200, ysz);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = "10px Segoe UI";
+    ctx.fillStyle = `rgb(${kolor})`;
+    ctx.fillText((dno ? "podwójne dno" : "podwójny szczyt") +
+                 (f.kierunek === "ostrzezenie" ? " · pułapka" : ""),
+                 x1 + 3, dno ? Math.max(y1, y2) + 12 : Math.min(y1, y2) - 5);
     ctx.restore();
   }
 
@@ -1117,8 +1149,9 @@ class ChmuraChart {
     for (const s of signals) {
       const mk = KIND_MARK[s.kind];
       if (!mk) continue;
-      // kanal wykryty na innym interwale nie ma sensu na tym wykresie
-      if (/^(kanal|dno)_/.test(String(s.kind)) && !s.kind.endsWith(`_${this._iv}`)) continue;
+      // kanaly i formacje NIE dostaja znacznikow ani kropek - rysujemy je
+      // ksztaltem na wykresie, zeby nie zaslaniac ceny punktami
+      if (/^(kanal|dno)_/.test(String(s.kind))) continue;
       const t = snap(Math.floor(Date.parse(s.ts) / 1000));
       if (t === null) continue;
       marks.push({ time: t, position: mk.shape === "arrowDown" ? "aboveBar" : "belowBar",
@@ -1138,6 +1171,17 @@ class ChmuraChart {
       this._auto.push({ t1: d.t1, t2: d.t2, g1: +d.g1, g2: +d.g2, d1: +d.d1, d2: +d.d2,
                         kier: d.kier, alert: d.alert });
     }
+    // FORMACJE (podwojne dno / szczyt) - ksztalt: dwa ekstrema + linia szyi
+    this._form = [];
+    for (const s of signals) {
+      if (s.kind !== `dno_${this._iv}`) continue;
+      let d = s.detail;
+      if (typeof d === "string") { try { d = JSON.parse(d); } catch (_e) { continue; } }
+      if (!d || !d.t1 || !d.t2 || !d.szyja) continue;
+      this._form.push({ t1: d.t1, t2: d.t2, p1: +d.p1, p2: +d.p2, szyja: +d.szyja,
+                        typ: d.typ, kierunek: d.kierunek, alert: d.alert });
+    }
+    if (this.tool) this.tool.formacje = this._form;
     this._odswiezKanaly();
     if (this._srOn) this.tool.levels = this._liczPoziomy();
     for (const d of delistings || []) {
