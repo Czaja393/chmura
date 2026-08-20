@@ -113,7 +113,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-0753";</script></head>
+<script>window.CHMURA_BUILD="20.08-0805";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -185,6 +185,7 @@
       <button id="btn-undo"  title="Cofnij ostatni rysunek">↶</button>
       <button id="btn-erase" title="Wyczyść wszystkie rysunki">🗑</button>
     </div>
+    <button id="btn-usun-zazn" style="display:none;position:absolute;z-index:24;background:#ef5350;color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer">✕ usuń</button>
     <div id="chart"></div>
     <div id="iv-mobile">
       <button data-iv="15min">15m</button>
@@ -198,6 +199,7 @@
       <button data-tool="hline" title="linia pozioma">━</button>
       <button data-tool="channel" title="kanał równoległy">▤</button>
       <button id="btn-undo-m" title="cofnij rysunek">↶</button>
+      <button id="btn-erase-m" title="usuń zaznaczony rysunek">🗑</button>
     </div>
   </div>
   <div id="right">
@@ -947,6 +949,11 @@ class ChmuraChart {
         if (idx !== null || this.tool.sel != null) {
           this.tool.sel = idx;
           this.tool.refresh();
+          // pokaz przycisk usuwania przy zaznaczonym rysunku (dotyk nie ma Delete)
+          if (this.onZaznaczenie) {
+            const rect = this.el.getBoundingClientRect();
+            this.onZaznaczenie(idx !== null, e.clientX - rect.left, e.clientY - rect.top);
+          }
         }
       }
       if (!this.tool.mode || this._dragging) return;      // drugi palec nie psuje rysowania
@@ -1315,6 +1322,7 @@ class ChmuraChart {
   // gumka: usuwa ZAZNACZONY rysunek, a gdy nic nie zaznaczone - ostatni;
   // z argumentem true czysci wszystkie
   eraseTool(wszystko = false) {
+    if (this.onZaznaczenie) this.onZaznaczenie(false, 0, 0);
     if (wszystko) this.tool.drawings = [];
     else if (this.tool.sel != null && this.tool.drawings[this.tool.sel]) {
       this.tool.drawings.splice(this.tool.sel, 1);
@@ -1723,6 +1731,21 @@ const odswiezPasek = () => document.querySelectorAll("[data-tool]").forEach((x) 
 $("btn-undo").addEventListener("click", () => { chart.eraseTool(false); odswiezPasek(); });
 $("btn-erase").addEventListener("click", () => { chart.eraseTool(true); odswiezPasek(); });
 $("btn-undo-m").addEventListener("click", (e) => { e.stopPropagation(); chart.eraseTool(false); odswiezPasek(); });
+$("btn-erase-m").addEventListener("click", (e) => { e.stopPropagation(); chart.eraseTool(false); odswiezPasek(); });
+// pływający przycisk przy zaznaczonym rysunku - na telefonie nie ma klawisza Delete
+chart.onZaznaczenie = (jest, x, y) => {
+  const b = $("btn-usun-zazn");
+  if (!jest) { b.style.display = "none"; return; }
+  b.style.display = "block";
+  b.style.left = Math.max(4, x - 26) + "px";
+  b.style.top = Math.max(4, y - 38) + "px";
+};
+$("btn-usun-zazn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  chart.eraseTool(false);
+  $("btn-usun-zazn").style.display = "none";
+  odswiezPasek();
+});
 $("btn-refresh").addEventListener("click", () => loadSymbol(state.symbol));
 const ustawMotyw = (jasny) => {
   document.body.classList.toggle("jasny", jasny);
