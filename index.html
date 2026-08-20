@@ -113,7 +113,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-0805";</script></head>
+<script>window.CHMURA_BUILD="20.08-0815";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -412,7 +412,7 @@ function signalPrice(detail) {
 // sygnaly LIVE (od startu systemu 2026-08-11) + wyniki z trackera
 async function fetchLiveSignals() {
   const sigs = await rest(
-    `signals?ts=gte.2026-08-11T00:00:00Z&kind=not.in.(awake,grupa_a,kanal_1day,kanal_4hour,kanal_60min)` +
+    `signals?ts=gte.2026-08-11T00:00:00Z&kind=not.in.(awake,grupa_a,kanal_1day,kanal_4hour,kanal_60min,dno_1day,dno_4hour,dno_60min)` +
     `&select=id,ts,symbol,kind,strength,detail&order=ts.desc&limit=500`);
   if (!sigs.length) return [];
   const ids = sigs.map((s) => s.id).join(",");
@@ -437,7 +437,7 @@ async function fetchDailyVolumes() {
 // FORMACJE (kanaly i kolejne wzorce) - osobna lista, zeby nie zalewaly sygnalow
 async function fetchFormacje(tylkoZPrzewaga = true) {
   const rows = await rest(
-    `signals?kind=in.(kanal_1day,kanal_4hour,kanal_60min)` +
+    `signals?kind=in.(kanal_1day,kanal_4hour,kanal_60min,dno_1day,dno_4hour,dno_60min)` +
     `&select=id,ts,symbol,kind,strength,detail&order=ts.desc&limit=400`);
   const out = rows.map((r) => {
     let dd = r.detail;
@@ -612,6 +612,9 @@ const KIND_MARK = {
   kanal_1day:          { color: "#26c6da", shape: "circle",    text: "KANAŁ" },
   kanal_4hour:         { color: "#26c6da", shape: "circle",    text: "KANAŁ" },
   kanal_60min:         { color: "#26c6da", shape: "circle",    text: "KANAŁ" },
+  dno_1day:            { color: "#ffca28", shape: "circle",    text: "FORMACJA" },
+  dno_4hour:           { color: "#ffca28", shape: "circle",    text: "FORMACJA" },
+  dno_60min:           { color: "#ffca28", shape: "circle",    text: "FORMACJA" },
 };
 const MA_DEFS = {
   SMA20:  { fn: sma, n: 20,  color: "#42a5f5" },
@@ -1108,7 +1111,7 @@ class ChmuraChart {
       const mk = KIND_MARK[s.kind];
       if (!mk) continue;
       // kanal wykryty na innym interwale nie ma sensu na tym wykresie
-      if (String(s.kind).startsWith("kanal_") && s.kind !== `kanal_${this._iv}`) continue;
+      if (/^(kanal|dno)_/.test(String(s.kind)) && !s.kind.endsWith(`_${this._iv}`)) continue;
       const t = snap(Math.floor(Date.parse(s.ts) / 1000));
       if (t === null) continue;
       marks.push({ time: t, position: mk.shape === "arrowDown" ? "aboveBar" : "belowBar",
@@ -1822,7 +1825,8 @@ $("btn-signals").addEventListener("click", async () => {
 });
 
 // --- zakladka FORMACJE: kanaly i kolejne wzorce, osobno od sygnalow wolumenowych ---
-const IV_PL = { kanal_1day: "1D", kanal_4hour: "4H", kanal_60min: "1H" };
+const IV_PL = { kanal_1day: "1D", kanal_4hour: "4H", kanal_60min: "1H",
+                dno_1day: "1D", dno_4hour: "4H", dno_60min: "1H" };
 const TYP_PL = {
   przy_gornej: "przy górnej krawędzi", przy_dolnej: "przy dolnej krawędzi",
   wybicie_gora: "wybicie górą", wybicie_dol: "zejście dołem",
@@ -1837,8 +1841,12 @@ async function pokazFormacje() {
       <td style="padding:4px 8px">${plDate(r.ts)}</td>
       <td style="padding:4px 8px"><b>${r.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
       <td style="padding:4px 8px">${IV_PL[r.kind] ?? r.kind}</td>
-      <td style="padding:4px 8px">kanał ${r.d.kier ?? "?"}</td>
-      <td style="padding:4px 8px">${TYP_PL[r.d.typ] ?? r.d.typ ?? "—"}</td>
+      <td style="padding:4px 8px">${String(r.kind).startsWith("dno_")
+        ? (r.d.typ === "podwojne_dno" ? "podwójne dno" : "podwójny szczyt")
+        : "kanał " + (r.d.kier ?? "?")}</td>
+      <td style="padding:4px 8px">${String(r.kind).startsWith("dno_")
+        ? (r.d.kierunek === "ostrzezenie" ? "⚠ pułapka na byki" : "wybicie szyi")
+        : (TYP_PL[r.d.typ] ?? r.d.typ ?? "—")}</td>
       <td style="padding:4px 8px">${r.d.wys_pct != null ? Number(r.d.wys_pct).toFixed(0) + "%" : "—"}</td>
       <td style="padding:4px 8px;color:${r.d.alert ? "#26c6da" : "#787b86"}">${r.d.alert ? "przewaga" : "informacja"}</td>
     </tr>`).join("");
