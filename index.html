@@ -26,7 +26,8 @@
   #layout { display: grid; grid-template-columns: 240px 1fr 300px; grid-template-rows: 44px 26px 1fr; height: 100vh; }
   /* zwijana lista par - wiecej miejsca na wykres i narzedzia */
   #layout.bez-listy { grid-template-columns: 0 1fr 300px; }
-  #layout.bez-listy aside { display: none; }
+  /* aside zostaje w siatce (tylko zwiniety), inaczej wykres wpada do kolumny 0 px */
+  #layout.bez-listy aside { overflow: hidden; border-right: none; padding: 0; min-width: 0; }
   .only-desktop { display: inline-block; }
   header { grid-column: 1 / 4; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
   #info-bar { grid-column: 1 / 4; display: flex; align-items: center; gap: 18px; padding: 0 14px;
@@ -134,7 +135,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-1729";</script></head>
+<script>window.CHMURA_BUILD="20.08-1736";</script></head>
 <body>
 <div id="layout">
   <header>
