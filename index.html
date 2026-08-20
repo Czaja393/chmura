@@ -113,7 +113,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-0730";</script></head>
+<script>window.CHMURA_BUILD="20.08-0744";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -147,6 +147,7 @@
     <button class="tool-btn" id="btn-fibo2" title="dwa klikniecia na wykresie">Fibo 2pkt</button>
     <button class="tool-btn" id="btn-ruler" title="dwa klikniecia: zmierz % miedzy punktami">Miarka %</button>
     <button class="tool-btn" id="btn-signals">Sygnały</button>
+    <button class="tool-btn" id="btn-formacje">Formacje</button>
     <button class="tool-btn" id="btn-delist">Delisting</button>
     <button class="tool-btn" id="btn-news">Newsy</button>
     <button class="tool-btn" id="btn-refresh">Odśwież</button>
@@ -409,7 +410,7 @@ function signalPrice(detail) {
 // sygnaly LIVE (od startu systemu 2026-08-11) + wyniki z trackera
 async function fetchLiveSignals() {
   const sigs = await rest(
-    `signals?ts=gte.2026-08-11T00:00:00Z&kind=not.in.(awake,grupa_a)` +
+    `signals?ts=gte.2026-08-11T00:00:00Z&kind=not.in.(awake,grupa_a,kanal_1day,kanal_4hour,kanal_60min)` +
     `&select=id,ts,symbol,kind,strength,detail&order=ts.desc&limit=500`);
   if (!sigs.length) return [];
   const ids = sigs.map((s) => s.id).join(",");
@@ -429,6 +430,19 @@ async function fetchDailyVolumes() {
     if (page.length < 1000) break;
   }
   return out;
+}
+
+// FORMACJE (kanaly i kolejne wzorce) - osobna lista, zeby nie zalewaly sygnalow
+async function fetchFormacje(tylkoZPrzewaga = true) {
+  const rows = await rest(
+    `signals?kind=in.(kanal_1day,kanal_4hour,kanal_60min)` +
+    `&select=id,ts,symbol,kind,strength,detail&order=ts.desc&limit=400`);
+  const out = rows.map((r) => {
+    let dd = r.detail;
+    if (typeof dd === "string") { try { dd = JSON.parse(dd); } catch (_e) { dd = {}; } }
+    return { ...r, d: dd || {} };
+  });
+  return tylkoZPrzewaga ? out.filter((r) => r.d.alert) : out;
 }
 
 async function fetchDelistings(symbol) {
@@ -1685,6 +1699,44 @@ $("btn-signals").addEventListener("click", async () => {
       <th style="text-align:left;padding:4px 8px">wynik teraz</th><th style="text-align:left;padding:4px 8px">max / min</th></tr>${rows}</table>
     <p class="muted" style="margin-top:8px">Klik w wiersz = wykres coina. Wyniki liczone od ceny sygnału (tracker, odświeżany co dobę i po komendzie "raport").</p>`);
 });
+
+// --- zakladka FORMACJE: kanaly i kolejne wzorce, osobno od sygnalow wolumenowych ---
+const IV_PL = { kanal_1day: "1D", kanal_4hour: "4H", kanal_60min: "1H" };
+const TYP_PL = {
+  przy_gornej: "przy górnej krawędzi", przy_dolnej: "przy dolnej krawędzi",
+  wybicie_gora: "wybicie górą", wybicie_dol: "zejście dołem",
+  retest_gora: "retest górnej", retest_dol: "retest dolnej",
+};
+let formacjeWszystkie = false;
+async function pokazFormacje() {
+  openModal("Formacje", `<div class="muted">ładowanie…</div>`);
+  const f = await fetchFormacje(!formacjeWszystkie);
+  const rows = f.map((r) => `
+    <tr data-goto="${r.symbol}" style="cursor:pointer;border-bottom:1px solid #2a2e3955">
+      <td style="padding:4px 8px">${plDate(r.ts)}</td>
+      <td style="padding:4px 8px"><b>${r.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
+      <td style="padding:4px 8px">${IV_PL[r.kind] ?? r.kind}</td>
+      <td style="padding:4px 8px">kanał ${r.d.kier ?? "?"}</td>
+      <td style="padding:4px 8px">${TYP_PL[r.d.typ] ?? r.d.typ ?? "—"}</td>
+      <td style="padding:4px 8px">${r.d.wys_pct != null ? Number(r.d.wys_pct).toFixed(0) + "%" : "—"}</td>
+      <td style="padding:4px 8px;color:${r.d.alert ? "#26c6da" : "#787b86"}">${r.d.alert ? "przewaga" : "informacja"}</td>
+    </tr>`).join("");
+  openModal(`Formacje — kanały (${f.length})`,
+    `<div style="margin-bottom:8px">
+      <button class="tool-btn" id="btn-form-filtr" style="border:1px solid var(--border)">
+        ${formacjeWszystkie ? "pokaż tylko z przewagą" : "pokaż wszystkie wykryte"}</button>
+     </div>
+     <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <tr class="muted"><th style="text-align:left;padding:4px 8px">data</th>
+      <th style="text-align:left;padding:4px 8px">coin</th><th style="text-align:left;padding:4px 8px">interwał</th>
+      <th style="text-align:left;padding:4px 8px">formacja</th><th style="text-align:left;padding:4px 8px">zdarzenie</th>
+      <th style="text-align:left;padding:4px 8px">wysokość</th><th style="text-align:left;padding:4px 8px">status</th></tr>${rows}</table>
+     <p class="muted" style="margin-top:8px">„Przewaga" = układ, który historycznie zarabiał (tylko takie idą na Telegram).
+     „Informacja" = kanał wykryty, ale bez policzonej przewagi. Klik w wiersz = wykres coina.</p>`);
+  const b = document.getElementById("btn-form-filtr");
+  if (b) b.addEventListener("click", () => { formacjeWszystkie = !formacjeWszystkie; pokazFormacje(); });
+}
+$("btn-formacje").addEventListener("click", pokazFormacje);
 
 // --- zlecenia (Etap 2): draft w apce -> TAK/NIE w Telegramie -> egzekutor ---
 const ORDER_ST = { draft: "czeka na TAK w Telegramie", armed: "uzbrojone", running: "w trakcie",
