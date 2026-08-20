@@ -19,6 +19,10 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font: 13px/1.45 "Segoe UI", system-ui, sans-serif; height: 100vh; overflow: hidden; }
   #layout { display: grid; grid-template-columns: 240px 1fr 300px; grid-template-rows: 44px 26px 1fr; height: 100vh; }
+  /* zwijana lista par - wiecej miejsca na wykres i narzedzia */
+  #layout.bez-listy { grid-template-columns: 0 1fr 300px; }
+  #layout.bez-listy aside { display: none; }
+  .only-desktop { display: inline-block; }
   header { grid-column: 1 / 4; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--panel); border-bottom: 1px solid var(--border); }
   #info-bar { grid-column: 1 / 4; display: flex; align-items: center; gap: 18px; padding: 0 14px;
     background: var(--panel); border-bottom: 1px solid var(--border); color: var(--muted);
@@ -91,6 +95,7 @@
     .iv-btn, .tool-btn { padding: 4px 7px; white-space: nowrap; }
     #info-bar { overflow-x: auto; scrollbar-width: none; gap: 12px; }
     .only-mobile { display: inline-block; }
+    .only-desktop { display: none; }
     aside, #right {
       position: fixed; top: 44px; bottom: 0; width: min(85vw, 340px); z-index: 60;
       transition: transform .25s ease; box-shadow: 0 0 30px #000c;
@@ -103,11 +108,12 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-0704";</script></head>
+<script>window.CHMURA_BUILD="20.08-0711";</script></head>
 <body>
 <div id="layout">
   <header>
     <button class="tool-btn only-mobile" id="btn-coins">☰ Coiny</button>
+    <button class="tool-btn only-desktop" id="btn-lista" title="ukryj / pokaż listę par">☰</button>
     <span class="sym" id="h-sym">—</span>
     <button class="tool-btn" id="btn-info" title="co to za coin?">ℹ️</button>
     <span class="px" id="h-px">—</span>
@@ -128,6 +134,8 @@
         <label style="display:block;padding:2px"><input type="checkbox" data-ma="EMA26"> EMA 26</label>
       </div>
     </div>
+    <button class="tool-btn" id="btn-kanaly" title="kanały wykryte przez system">Kanały</button>
+    <button class="tool-btn" id="btn-sr" title="wsparcia i opory z historii wykresu">Wsparcia/Opory</button>
     <button class="tool-btn" id="btn-ichimoku">Ichimoku</button>
     <button class="tool-btn" id="btn-fibo">Fibo auto</button>
     <button class="tool-btn" id="btn-fibo2" title="dwa klikniecia na wykresie">Fibo 2pkt</button>
@@ -683,6 +691,7 @@ class ToolPrimitive {
     return [{
       renderer: () => ({
         draw: (target) => target.useMediaCoordinateSpace(({ context: ctx, mediaSize }) => {
+          this._poziomy(ctx, mediaSize);
           for (const k of (this.auto ?? [])) this._kanalAuto(ctx, k);
           for (const d of this.drawings) this._one(ctx, d, mediaSize);
           if (this.pending) this._one(ctx, { ...this.pending, c: this.preview }, mediaSize, true);
@@ -707,6 +716,28 @@ class ToolPrimitive {
       else if (d.type === "trend") this._trend(ctx, A, B);
       else if (d.type === "rect") this._rect(ctx, A, B);
       else if (d.type === "channel") this._channel(ctx, d, A, B);
+    }
+    ctx.restore();
+  }
+
+  // WSPARCIA i OPORY: poziome linie w miejscach, gdzie cena wielokrotnie zawracala.
+  // Grubosc linii rosnie z liczba dotkniec - im wiecej, tym powazniejszy poziom.
+  _poziomy(ctx, mediaSize) {
+    const w = mediaSize?.width ?? 9999;
+    ctx.save();
+    ctx.font = "10px Segoe UI";
+    for (const p of (this.levels ?? [])) {
+      const y = this._s.priceToCoordinate(p.price);
+      if (y === null) continue;
+      const kolor = p.typ === "opor" ? "239,83,80" : "38,166,154";
+      ctx.strokeStyle = `rgba(${kolor},${0.35 + Math.min(0.45, p.dotkniecia * 0.09)})`;
+      ctx.lineWidth = Math.min(2.4, 0.8 + p.dotkniecia * 0.25);
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w - 62, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = `rgb(${kolor})`;
+      ctx.fillText(`${p.typ === "opor" ? "opór" : "wsparcie"} ${fp(p.price)} (${p.dotkniecia}x)`,
+                   6, y - 3);
     }
     ctx.restore();
   }
@@ -985,7 +1016,8 @@ class ChmuraChart {
       this._auto.push({ t1: d.t1, t2: d.t2, g1: +d.g1, g2: +d.g2, d1: +d.d1, d2: +d.d2,
                         kier: d.kier, alert: d.alert });
     }
-    if (this.tool) this.tool.auto = this._auto;
+    if (this.tool) this.tool.auto = this._kanalyOff ? [] : this._auto;
+    if (this._srOn) this.tool.levels = this._liczPoziomy();
     for (const d of delistings || []) {
       const t = snap(Math.floor(Date.parse(d.published_at || d.seen_at) / 1000));
       if (t !== null) marks.push({ time: t, position: "aboveBar", color: "#ff1744",
@@ -993,6 +1025,54 @@ class ChmuraChart {
     }
     marks.sort((a, b) => a.time - b.time);
     this.candles.setMarkers(marks);
+  }
+
+  // Poziomy z historii wykresu: punkty zwrotne (potwierdzone 3 swiecami z kazdej
+  // strony) sklejone w grupy o zblizonej cenie. Liczba dotkniec = sila poziomu.
+  _liczPoziomy() {
+    const d = this.data;
+    if (!d || d.length < 30) return [];
+    const k = 3, punkty = [];
+    for (let i = k; i < d.length - k; i++) {
+      let maxH = -Infinity, minL = Infinity;
+      for (let j = i - k; j <= i + k; j++) { maxH = Math.max(maxH, d[j].high); minL = Math.min(minL, d[j].low); }
+      if (d[i].high === maxH) punkty.push(d[i].high);
+      if (d[i].low === minL) punkty.push(d[i].low);
+    }
+    if (!punkty.length) return [];
+    punkty.sort((a, b) => a - b);
+    const px = d[d.length - 1].close;
+    const tol = px * 0.012;                    // poziomy blizsze niz 1,2% to jeden poziom
+    const grupy = [];
+    let biez = [punkty[0]];
+    for (let i = 1; i < punkty.length; i++) {
+      if (punkty[i] - biez[biez.length - 1] <= tol) biez.push(punkty[i]);
+      else { grupy.push(biez); biez = [punkty[i]]; }
+    }
+    grupy.push(biez);
+    return grupy
+      .filter((g) => g.length >= 2)            // pojedyncze zawrocenie to nie poziom
+      .map((g) => {
+        const cena = g.reduce((a, b) => a + b, 0) / g.length;
+        return { price: cena, dotkniecia: g.length, typ: cena >= px ? "opor" : "wsparcie" };
+      })
+      .filter((p) => Math.abs(p.price / px - 1) <= 0.6)   // tylko w zasiegu wzroku
+      .sort((a, b) => b.dotkniecia - a.dotkniecia || Math.abs(a.price - px) - Math.abs(b.price - px))
+      .slice(0, 8);
+  }
+
+  togglePoziomy() {
+    this._srOn = !this._srOn;
+    this.tool.levels = this._srOn ? this._liczPoziomy() : [];
+    this.tool.refresh();
+    return this._srOn;
+  }
+
+  toggleKanaly() {
+    this._kanalyOff = !this._kanalyOff;
+    this.tool.auto = this._kanalyOff ? [] : (this._auto ?? []);
+    this.tool.refresh();
+    return !this._kanalyOff;
   }
 
   toggleMA(key) {
@@ -1402,6 +1482,16 @@ $("btn-undo").addEventListener("click", () => { chart.eraseTool(false); odswiezP
 $("btn-erase").addEventListener("click", () => { chart.eraseTool(true); odswiezPasek(); });
 $("btn-undo-m").addEventListener("click", (e) => { e.stopPropagation(); chart.eraseTool(false); odswiezPasek(); });
 $("btn-refresh").addEventListener("click", () => loadSymbol(state.symbol));
+$("btn-sr").addEventListener("click", (e) => e.target.classList.toggle("active", chart.togglePoziomy()));
+$("btn-kanaly").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleKanaly()));
+// zwijanie listy par: stan pamietany miedzy wizytami
+const ustawListe = (schowana) => {
+  $("layout").classList.toggle("bez-listy", schowana);
+  localStorage.setItem("chmura.lista", schowana ? "0" : "1");
+  setTimeout(() => window.dispatchEvent(new Event("resize")), 50);   // wykres dopasuje szerokosc
+};
+$("btn-lista").addEventListener("click", () => ustawListe(!$("layout").classList.contains("bez-listy")));
+if (localStorage.getItem("chmura.lista") === "0") ustawListe(true);
 $("btn-ichimoku").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleIchimoku()));
 $("btn-fibo").addEventListener("click", (e) => e.target.classList.toggle("active", chart.toggleFibo()));
 $("btn-fibo2").addEventListener("click", () => chart.armTool("fibo2"));
