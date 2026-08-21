@@ -98,9 +98,13 @@
   .only-mobile { display: none; }
   /* menu w naglowku - zamiast kilkunastu przyciskow obok siebie */
   .menu-box { position: relative; }
-  .menu { display: none; position: absolute; top: 30px; right: 0; z-index: 40;
+  /* Menu jest przypiete do OKNA, nie do naglowka. Na telefonie naglowek ma
+     overflow-x: auto, a taki rodzic przycina wszystko, co z niego wystaje -
+     rozwijane listy byly niewidoczne (zgloszone 21.08). Pozycje ustawia JS. */
+  .menu { display: none; position: fixed; z-index: 60;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-    padding: 6px; min-width: 200px; box-shadow: 0 8px 24px #0008; }
+    padding: 6px; min-width: 210px; max-height: 70vh; overflow-y: auto;
+    box-shadow: 0 8px 28px #000c; }
   .menu.open { display: block; }
   .menu-tyt { font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
     color: var(--muted); padding: 6px 8px 3px; }
@@ -174,6 +178,9 @@
     .iv-btn, .tool-btn { padding: 4px 7px; white-space: nowrap; }
     #info-bar { overflow-x: auto; scrollbar-width: none; gap: 12px; }
     .only-mobile { display: inline-block; }
+    /* palcem trafia sie gorzej niz myszka */
+    .menu { min-width: 240px; padding: 8px; }
+    .menu-poz, .menu label { padding: 11px 12px; font-size: 13px; }
     .only-desktop { display: none; }
     aside, #right {
       position: fixed; top: 44px; bottom: 0; width: min(85vw, 340px); z-index: 60;
@@ -187,7 +194,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="20.08-1938";</script></head>
+<script>window.CHMURA_BUILD="21.08-0731";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -844,6 +851,16 @@ function miejscaPoPrzecinku(v) {
 const fp = (v) => (Number.isFinite(v) ? v.toFixed(miejscaPoPrzecinku(v)) : "—");
 
 // Wypelniona chmura Ichimoku
+// Co wolno skalowac gestem. Kluczowe: os CEN jest zablokowana. Wczesniej szlo
+// tu zwykle `true`, wiec przeciagniecie palcem przy prawej krawedzi rozciagalo skale
+// i wykres "rozjezdzal sie" - na FUN az do wartosci ujemnych.
+const SKALA = {
+  axisPressedMouseMove: { time: true, price: false },
+  axisDoubleClickReset: { time: true, price: true },
+  mouseWheel: true,
+  pinch: true,
+};
+
 // cena w podpisach: bez notacji wykladniczej, z liczba miejsc dobrana do rzedu wielkosci
 function cenaKr(v) {
   if (!Number.isFinite(v) || v <= 0) return "-";
@@ -1242,7 +1259,10 @@ class ChmuraChart {
               horzLines: { color: kolorCss("--border", "#2B2B2B") + "55" } },
       crosshair: { mode: 0 },
       timeScale: { timeVisible: true, borderColor: kolorCss("--border", "#2B2B2B") },
-      rightPriceScale: { borderColor: kolorCss("--border", "#2B2B2B") },
+      // autoScale trzyma swiece w kadrze; bez tego przeciagniecie przy prawej krawedzi
+      // rozjezdzalo wykres az do cen ujemnych (zglaszane z telefonu 21.08)
+      rightPriceScale: { borderColor: kolorCss("--border", "#2B2B2B"), autoScale: true },
+      handleScale: SKALA,
       autoSize: true,
     });
     this.candles = this.chart.addCandlestickSeries({
@@ -1418,12 +1438,15 @@ class ChmuraChart {
   _setPan(on) {
     // pan/zoom nie moze sie wlaczyc w POLOWIE przeciagania ani gdy narzedzie uzbrojone
     if (on && (this._dragging || this.tool?.mode)) return;
-    this.chart.applyOptions({ handleScroll: on, handleScale: on });
+    this.chart.applyOptions({ handleScroll: on, handleScale: on ? SKALA : false });
     this.el.style.touchAction = on ? "auto" : "none";
   }
 
   setData(rows) {
     this.data = rows;
+    // przywrocenie automatycznej skali: gdyby uzytkownik ja kiedys rozciagnal,
+    // zmiana coina albo odswiezenie zawsze wraca do porzadku
+    this.chart.priceScale("right").applyOptions({ autoScale: true });
     this.candles.setData(rows);
     this.volume.setData(rows.map((r) => ({
       time: r.time, value: r.vol, color: r.close >= r.open ? "#4EC08A44" : "#E5484D44",
@@ -2329,14 +2352,42 @@ $("btn-usun-zazn").addEventListener("click", (e) => {
 $("btn-refresh").addEventListener("click", () => loadSymbol(state.symbol));
 window.CHMURA_CHART = chart;   // uchwyt do diagnostyki (konsola przegladarki)
 // menu w naglowku: klik otwiera, klik obok zamyka
+// menu jest position:fixed, wiec jego miejsce trzeba wyliczyc przy otwarciu
+function ustawMenu(przycisk, menu) {
+  const r = przycisk.getBoundingClientRect();
+  menu.style.visibility = "hidden";
+  menu.classList.add("open");
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  const margines = 8;
+  // clientWidth, nie innerWidth: innerWidth bywa wieksze od realnego widoku
+  // (paski przegladarki, emulacja), przez co menu wychodzilo poza ekran telefonu
+  const W = document.documentElement.clientWidth;
+  const H = document.documentElement.clientHeight;
+  let lewo = r.right - w;                                   // domyslnie wyrownane do prawej
+  lewo = Math.max(margines, Math.min(lewo, W - w - margines));
+  let gora = r.bottom + 4;
+  if (gora + h > H - margines)                              // nie miesci sie pod spodem
+    gora = Math.max(margines, r.top - h - 4);
+  menu.style.maxWidth = `${W - 2 * margines}px`;
+  menu.style.left = `${Math.round(lewo)}px`;
+  menu.style.top = `${Math.round(gora)}px`;
+  menu.style.visibility = "";
+}
 document.querySelectorAll(".menu-box > .tool-btn").forEach((b) => {
   b.addEventListener("click", (e) => {
     e.stopPropagation();
     const m = b.nextElementSibling;
-    document.querySelectorAll(".menu").forEach((x) => { if (x !== m) x.classList.remove("open"); });
-    m.classList.toggle("open");
+    const bylo = m.classList.contains("open");
+    document.querySelectorAll(".menu").forEach((x) => x.classList.remove("open"));
+    if (!bylo) ustawMenu(b, m);
   });
 });
+// zmiana rozmiaru albo przewiniecie naglowka: zamykamy, zeby menu nie wisialo w powietrzu
+window.addEventListener("resize", () =>
+  document.querySelectorAll(".menu").forEach((m) => m.classList.remove("open")));
+const naglowek = document.querySelector("header");
+if (naglowek) naglowek.addEventListener("scroll", () =>
+  document.querySelectorAll(".menu").forEach((m) => m.classList.remove("open")));
 document.addEventListener("click", () => document.querySelectorAll(".menu").forEach((m) => m.classList.remove("open")));
 document.querySelectorAll(".menu").forEach((m) => m.addEventListener("click", (e) => e.stopPropagation()));
 
