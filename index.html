@@ -194,7 +194,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="21.08-0746";</script></head>
+<script>window.CHMURA_BUILD="21.08-0756";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -855,7 +855,7 @@ const fp = (v) => (Number.isFinite(v) ? v.toFixed(miejscaPoPrzecinku(v)) : "—"
 // tu zwykle `true`, wiec przeciagniecie palcem przy prawej krawedzi rozciagalo skale
 // i wykres "rozjezdzal sie" - na FUN az do wartosci ujemnych.
 const SKALA = {
-  axisPressedMouseMove: { time: true, price: false },
+  axisPressedMouseMove: { time: true, price: true },   // suwak skali po prawej ma dzialac
   axisDoubleClickReset: { time: true, price: true },
   mouseWheel: true,
   pinch: true,
@@ -1297,9 +1297,23 @@ class ChmuraChart {
     // nie przewijala i nie skalowala widoku rownolegle z biblioteka
     el.style.touchAction = "none";
 
-    // Straznik skali: gdyby cokolwiek jednak wylaczylo autoScale (mysz na PC,
-    // gest przegladarki), po puszczeniu wskaznika wracamy do kadru swiec.
+    // Straznik skali. Rozroznia dwie sytuacje:
+    //  - ciagniecie ZA SUWAK skali po prawej = swiadoma regulacja, zostawiamy w spokoju
+    //  - przeciagniecie po ciele wykresu = przypadek, wracamy do kadru swiec
+    // Bez tego rozroznienia albo wykres sam sie rozjezdzal, albo suwak byl bezuzyteczny.
+    this._naSuwaku = false;
+    // szerokosc osi bywa chwilowo zerowa (wykres jeszcze nie przeliczony), wiec
+    // trzymamy ostatnia sensowna wartosc zamiast zgadywac za kazdym razem
+    this._szerOsi = 60;
+    const czySuwak = (e) => {
+      const w = this.chart.priceScale("right").width();
+      if (w > 10) this._szerOsi = w;
+      const r = el.getBoundingClientRect();
+      return (e.clientX ?? 0) >= r.right - this._szerOsi - 6;
+    };
+    el.addEventListener("pointerdown", (e) => { this._naSuwaku = czySuwak(e); }, { passive: true });
     const przywrocSkale = () => {
+      if (this._naSuwaku) { this._naSuwaku = false; return; }   // uzytkownik tak chcial
       const ps = this.chart.priceScale("right");
       if (!ps.options().autoScale) ps.applyOptions({ autoScale: true });
     };
@@ -1475,8 +1489,9 @@ class ChmuraChart {
 
   setData(rows) {
     this.data = rows;
-    // przywrocenie automatycznej skali: gdyby uzytkownik ja kiedys rozciagnal,
-    // zmiana coina albo odswiezenie zawsze wraca do porzadku
+    // zmiana coina zawsze zaczyna od kadru swiec - recznie ustawiona skala
+    // poprzedniej pary nie ma sensu dla nowej
+    this._naSuwaku = false;
     this.chart.priceScale("right").applyOptions({ autoScale: true });
     this.candles.setData(rows);
     this.volume.setData(rows.map((r) => ({
@@ -2420,7 +2435,15 @@ const naglowek = document.querySelector("header");
 if (naglowek) naglowek.addEventListener("scroll", () =>
   document.querySelectorAll(".menu").forEach((m) => m.classList.remove("open")));
 document.addEventListener("click", () => document.querySelectorAll(".menu").forEach((m) => m.classList.remove("open")));
-document.querySelectorAll(".menu").forEach((m) => m.addEventListener("click", (e) => e.stopPropagation()));
+document.querySelectorAll(".menu").forEach((m) => m.addEventListener("click", (e) => {
+  e.stopPropagation();
+  // Wybor pozycji zamyka menu - inaczej rozwinieta lista zaslania okno, ktore
+  // wlasnie otworzyla. Wyjatki, ktore maja zostac otwarte:
+  //  - przelaczniki srednich kroczacych (chce sie zaznaczyc kilka naraz),
+  //  - zapis do segregatora (przycisk pokazuje przez chwile potwierdzenie).
+  const poz = e.target.closest(".menu-poz");
+  if (poz && !poz.dataset.zapisz) m.classList.remove("open");
+}));
 
 const ustawMotyw = (jasny) => {
   document.body.classList.toggle("jasny", jasny);
