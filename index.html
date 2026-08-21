@@ -194,7 +194,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="21.08-0731";</script></head>
+<script>window.CHMURA_BUILD="21.08-0746";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -860,6 +860,16 @@ const SKALA = {
   mouseWheel: true,
   pinch: true,
 };
+// Przewijanie. Kluczowe: vertTouchDrag = false. Przy `true` (czyli przy zwyklym
+// `handleScroll: true`) POJEDYNCZE pionowe przeciagniecie palcem po ciele wykresu
+// przesuwa skale cen i wylacza autoScale - to byla prawdziwa przyczyna rozjezdzania
+// sie wykresu na telefonie, blokada samej osi nie wystarczyla.
+const PRZEWIJANIE = {
+  mouseWheel: true,
+  pressedMouseMove: true,      // przeciaganie w bok po historii zostaje
+  horzTouchDrag: true,
+  vertTouchDrag: false,
+};
 
 // cena w podpisach: bez notacji wykladniczej, z liczba miejsc dobrana do rzedu wielkosci
 function cenaKr(v) {
@@ -1263,6 +1273,7 @@ class ChmuraChart {
       // rozjezdzalo wykres az do cen ujemnych (zglaszane z telefonu 21.08)
       rightPriceScale: { borderColor: kolorCss("--border", "#2B2B2B"), autoScale: true },
       handleScale: SKALA,
+      handleScroll: PRZEWIJANIE,
       autoSize: true,
     });
     this.candles = this.chart.addCandlestickSeries({
@@ -1281,6 +1292,22 @@ class ChmuraChart {
     this.ichSeries = []; this.fibSeries = [];
     this.maSeries = {}; this.data = [];
     this._spans = null; this._cloud = null;
+
+    // od pierwszej chwili wykres bierze caly dotyk na siebie, zeby przegladarka
+    // nie przewijala i nie skalowala widoku rownolegle z biblioteka
+    el.style.touchAction = "none";
+
+    // Straznik skali: gdyby cokolwiek jednak wylaczylo autoScale (mysz na PC,
+    // gest przegladarki), po puszczeniu wskaznika wracamy do kadru swiec.
+    const przywrocSkale = () => {
+      const ps = this.chart.priceScale("right");
+      if (!ps.options().autoScale) ps.applyOptions({ autoScale: true });
+    };
+    for (const zdarz of ["mouseup", "touchend", "touchcancel", "mouseleave"])
+      el.addEventListener(zdarz, przywrocSkale, { passive: true });
+    // takze na oknie: gdy biblioteka przechwyci wskaznik, puszczenie moze wypasc poza #chart
+    for (const zdarz of ["pointerup", "pointercancel"])
+      window.addEventListener(zdarz, przywrocSkale, { passive: true });
 
     this.tool = new ToolPrimitive(this.chart, this.candles, () => this.data);
     this.candles.attachPrimitive(this.tool);
@@ -1438,8 +1465,12 @@ class ChmuraChart {
   _setPan(on) {
     // pan/zoom nie moze sie wlaczyc w POLOWIE przeciagania ani gdy narzedzie uzbrojone
     if (on && (this._dragging || this.tool?.mode)) return;
-    this.chart.applyOptions({ handleScroll: on, handleScale: on ? SKALA : false });
-    this.el.style.touchAction = on ? "auto" : "none";
+    this.chart.applyOptions({ handleScroll: on ? PRZEWIJANIE : false,
+                              handleScale: on ? SKALA : false });
+    // ZAWSZE "none". Przy "auto" gesty na wykresie obsluguje takze przegladarka
+    // (przewijanie strony, pinch-zoom calego widoku) i konkuruje z biblioteka.
+    // Skoro to wykres ma decydowac, co wolno, oddajemy mu caly dotyk.
+    this.el.style.touchAction = "none";
   }
 
   setData(rows) {
