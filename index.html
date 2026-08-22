@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="22.08-1237";</script></head>
+<script>window.CHMURA_BUILD="22.08-1250";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -290,6 +290,7 @@
     <input id="search" placeholder="Szukaj pary… (np. fun)">
     <div style="padding:0 12px" class="muted"><label><input type="checkbox" id="only-fav"> tylko obserwowane ★</label></div>
     <div style="padding:0 12px;display:flex;align-items:center;gap:6px" class="muted"><label title="to, co faktycznie masz na koncie HTX"><input type="checkbox" id="only-poz"> otwarte pozycje <span id="poz-ile"></span></label><button class="tool-btn" id="poz-odswiez" title="odśwież stan konta teraz, bez czekania na kolektor" style="border:1px solid var(--border);padding:0 6px;line-height:18px">↻</button></div>
+    <div style="padding:0 12px" class="muted"><label title="pary, na ktorych masz zlecenie czekajace w arkuszu HTX"><input type="checkbox" id="only-zlec"> zlecenia czekające <span id="zlec-ile"></span></label></div>
     <div id="list-opts" class="muted">
       <label title="pokaż też pary z wolumenem poniżej 200 tys. $"><input type="checkbox" id="show-all"> pokaż wszystkie</label>
       <button class="tool-btn" id="btn-sort" title="kolejność listy">Wolumen ↓</button>
@@ -305,6 +306,7 @@
       <button data-tool="alarm"   title="Alarm cenowy - kliknij na wykresie, dostaniesz powiadomienie na Telegramie">🔔</button>
       <button data-tool="notatka" title="Notatka przypięta do wykresu - kliknij świecę albo formację, do której chcesz ją przykleić">📌</button>
       <button data-tool="wejscie" title="Moje wejście - kliknij cenę zakupu; linia pokaże zysk lub stratę na bieżąco (cenę można potem poprawić ręcznie)">📍</button>
+      <button id="btn-skala" title="Skala cen: AUTO trzyma kadr świec, RĘCZNA pozwala ciągnąć oś po prawej i zoomować w pionie. Powrót jednym kliknięciem.">⇕ auto</button>
       <button data-tool="ruler"   title="Miarka % - przeciągnij">📏</button>
       <button data-tool="fibo2"   title="Fibo 2 punkty - przeciągnij od dołka do szczytu">ƒ</button>
       <span class="rys-sep"></span>
@@ -327,6 +329,7 @@
       <button data-tool="alarm" title="alarm cenowy">🔔</button>
       <button data-tool="notatka" title="notatka przypięta do punktu">📌</button>
       <button data-tool="wejscie" title="moje wejście z wynikiem na żywo">📍</button>
+      <button id="btn-skala-m" title="skala cen: auto / ręczna">⇕</button>
       <button id="btn-undo-m" title="cofnij rysunek">↶</button>
       <button id="btn-erase-m" title="usuń zaznaczony rysunek">🗑</button>
     </div>
@@ -1242,14 +1245,44 @@ class ToolPrimitive {
   // Kolor idzie za wynikiem, zeby na pierwszy rzut oka bylo widac, czy jestes na plusie.
   // Cena biezaca wstrzykiwana jest z aplikacji (setCenaBiezaca), bo primitive nie ma
   // dostepu do websocketu.
+  // Plakietka przy prawej krawedzi, tuz obok skali cen. Zwraca zajety prostokat,
+  // zeby kolejne plakietki mogly sie rozsunac zamiast nachodzic na siebie.
+  _plakietka(ctx, y, tekst, kolor, w, zajete) {
+    const wys = 15;
+    ctx.font = "600 10px Segoe UI";
+    const szer = ctx.measureText(tekst).width + 10;
+    // 76 px, a nie 64: oś ma ~60 px, a straznik suwaka traktuje jeszcze 6 px na lewo
+    // od niej jako strefe chwytu. Plakietka wchodzaca w te strefe przechwytywalaby
+    // przeciagniecie skali i zamiast skalowac otwieralaby edycje wejscia.
+    const x = Math.max(4, w - 76 - szer);
+    // rozsuwanie w pionie: szukamy najblizszego wolnego miejsca
+    let yy = y - wys / 2;
+    for (let proba = 0; proba < 12; proba++) {
+      const koliduje = zajete.some((z) => Math.abs(z - yy) < wys + 1);
+      if (!koliduje) break;
+      yy += (proba % 2 === 0 ? 1 : -1) * (wys + 1) * Math.ceil((proba + 1) / 2);
+    }
+    zajete.push(yy);
+    ctx.fillStyle = kolor;
+    ctx.beginPath();
+    if (ctx.roundRect) { ctx.roundRect(x, yy, szer, wys, 3); ctx.fill(); }
+    else ctx.fillRect(x, yy, szer, wys);
+    ctx.fillStyle = "#0b0b0b";
+    ctx.fillText(tekst, x + 5, yy + 11);
+    return { x, y: yy, w: szer, h: wys };
+  }
+
+  // MOJE WEJSCIE + CEL. Kompaktowo: procent i kwota, bez powtarzania ceny,
+  // bo cena stoi tuz obok na skali. Klik w plakietke otwiera edycje.
   _wejscia(ctx, mediaSize) {
     this._trafieniaWejsc = [];
     const lista = this.wejscia ?? [];
     if (!lista.length) return;
     const w = mediaSize?.width ?? 9999;
+    const waski = w < 620;                       // telefon: tylko najwazniejsza liczba
     const teraz = this.cenaBiezaca;
+    const zajete = this._zajeteY ?? [];
     ctx.save();
-    ctx.font = "11px Segoe UI";
     for (const p of lista) {
       const y = this._s.priceToCoordinate(p.cena);
       if (y === null) continue;
@@ -1258,46 +1291,39 @@ class ToolPrimitive {
         : null;
       const kolor = zysk == null ? "#c9c9c0" : (zysk >= 0 ? "#26a69a" : "#ef5350");
       ctx.strokeStyle = kolor;
-      ctx.lineWidth = 1.6;
-      ctx.setLineDash([2, 3]);
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w - 62, y); ctx.stroke();
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w - 64, y); ctx.stroke();
       ctx.setLineDash([]);
       const kwota = Number(p.kwota_usd);
       const wynikUsd = zysk != null && Number.isFinite(kwota) ? (kwota * zysk / 100) : null;
-      const et = `WEJŚCIE ${fp(p.cena)}` +
-        (zysk == null ? "" : `  ${zysk >= 0 ? "+" : ""}${zysk.toFixed(2)}%`) +
-        (wynikUsd == null ? "" : `  (${wynikUsd >= 0 ? "+" : ""}${wynikUsd.toFixed(2)} $)`);
-      const szer = ctx.measureText(et).width;
-      ctx.fillStyle = "rgba(0,0,0,0.72)";
-      ctx.fillRect(6, y - 15, szer + 10, 14);
-      ctx.fillStyle = kolor;
-      ctx.fillText(et, 11, y - 5);
-      // pole klikalne: caly podpis, zeby dalo sie edytowac cene i kwote
-      this._trafieniaWejsc.push({ id: p.id, x: 6, y: y - 15, w: szer + 10, h: 14 });
+      const znak = (v) => (v >= 0 ? "+" : "");
+      const et = waski
+        ? `▸ ${zysk == null ? "wejście" : znak(zysk) + zysk.toFixed(1) + "%"}`
+        : `▸ WEJŚCIE ${zysk == null ? "" : znak(zysk) + zysk.toFixed(2) + "%"}` +
+          (wynikUsd == null ? "" : ` ${znak(wynikUsd)}${wynikUsd.toFixed(2)}$`);
+      const box = this._plakietka(ctx, y, et, kolor, w, zajete);
+      this._trafieniaWejsc.push({ id: p.id, ...box });
 
-      // CENA SPRZEDAZY jako osobna, zolta linia. Pokazuje, ile procent brakuje
-      // do celu - i ile zarobisz, jesli cel sie wypelni.
+      // CEL sprzedazy: druga plakietka, zolta
       if (Number.isFinite(p.cel) && p.cel > 0) {
         const yc = this._s.priceToCoordinate(p.cel);
         if (yc !== null) {
           ctx.strokeStyle = "#e3f50a";
-          ctx.lineWidth = 1.4;
-          ctx.setLineDash([6, 4]);
-          ctx.beginPath(); ctx.moveTo(0, yc); ctx.lineTo(w - 62, yc); ctx.stroke();
+          ctx.lineWidth = 1;
+          ctx.setLineDash([5, 4]);
+          ctx.beginPath(); ctx.moveTo(0, yc); ctx.lineTo(w - 64, yc); ctx.stroke();
           ctx.setLineDash([]);
-          const doCelu = Number.isFinite(teraz) ? (p.cel / teraz - 1) * 100 : null;
           const zCelu = (p.cel / p.cena - 1) * 100;
+          const doCelu = Number.isFinite(teraz) ? (p.cel / teraz - 1) * 100 : null;
           const zyskUsd = Number.isFinite(kwota) ? kwota * zCelu / 100 : null;
-          const etC = `CEL ${fp(p.cel)}  z wejścia ${zCelu >= 0 ? "+" : ""}${zCelu.toFixed(2)}%` +
-            (zyskUsd == null ? "" : ` (${zyskUsd >= 0 ? "+" : ""}${zyskUsd.toFixed(2)} $)`) +
-            (doCelu == null ? "" : `  ·  brakuje ${doCelu >= 0 ? "+" : ""}${doCelu.toFixed(2)}%`);
-          const szerC = ctx.measureText(etC).width;
-          ctx.fillStyle = "rgba(0,0,0,0.72)";
-          ctx.fillRect(6, yc - 15, szerC + 10, 14);
-          ctx.fillStyle = "#e3f50a";
-          ctx.fillText(etC, 11, yc - 5);
-          // klik w podpis celu tez otwiera edycje tej samej pozycji
-          this._trafieniaWejsc.push({ id: p.id, x: 6, y: yc - 15, w: szerC + 10, h: 14 });
+          const etC = waski
+            ? `🎯 ${znak(zCelu)}${zCelu.toFixed(1)}%`
+            : `🎯 CEL ${znak(zCelu)}${zCelu.toFixed(1)}%` +
+              (zyskUsd == null ? "" : ` ${znak(zyskUsd)}${zyskUsd.toFixed(2)}$`) +
+              (doCelu == null ? "" : ` · brak ${znak(doCelu)}${doCelu.toFixed(1)}%`);
+          const boxC = this._plakietka(ctx, yc, etC, "#e3f50a", w, zajete);
+          this._trafieniaWejsc.push({ id: p.id, ...boxC });
         }
       }
     }
@@ -1309,11 +1335,13 @@ class ToolPrimitive {
   // sie z linia pozycji. Kupno na zielono, sprzedaz na czerwono - jak w arkuszu.
   _zlecenia(ctx, mediaSize) {
     const lista = this.zlecenia ?? [];
+    // wspolna lista zajetych miejsc dla wszystkich plakietek na wykresie
+    this._zajeteY = [];
     if (!lista.length) return;
     const w = mediaSize?.width ?? 9999;
+    const waski = w < 620;
     const teraz = this.cenaBiezaca;
     ctx.save();
-    ctx.font = "10px Segoe UI";
     for (const z of lista) {
       const y = this._s.priceToCoordinate(z.cena);
       if (y === null) continue;
@@ -1321,45 +1349,50 @@ class ToolPrimitive {
       const kolor = kupno ? "#26a69a" : "#ef5350";
       ctx.strokeStyle = kolor;
       ctx.lineWidth = 1;
-      ctx.setLineDash([1, 3]);
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w - 62, y); ctx.stroke();
+      ctx.setLineDash([1, 4]);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w - 64, y); ctx.stroke();
       ctx.setLineDash([]);
-      // trojkacik pokazujacy, z ktorej strony czeka zlecenie
-      ctx.beginPath();
-      if (kupno) { ctx.moveTo(4, y - 4); ctx.lineTo(4, y + 4); ctx.lineTo(11, y); }
-      else { ctx.moveTo(4, y - 4); ctx.lineTo(11, y - 4); ctx.lineTo(7.5, y + 3); }
-      ctx.closePath(); ctx.fillStyle = kolor; ctx.fill();
       const ile = Number.isFinite(teraz) && teraz > 0 ? (z.cena / teraz - 1) * 100 : null;
-      const et = `CZEKA ${kupno ? "kupno" : "sprzedaz"} ${fp(z.cena)}` +
-        (Number.isFinite(z.kwota_usd) ? ` · ${z.kwota_usd.toFixed(0)} $` : "") +
-        (ile == null ? "" : ` · ${ile >= 0 ? "+" : ""}${ile.toFixed(2)}% od ceny`);
-      const szer = ctx.measureText(et).width;
-      const x = Math.max(14, w - 68 - szer);
-      ctx.fillStyle = "rgba(0,0,0,0.7)";
-      ctx.fillRect(x - 4, y - 13, szer + 8, 12);
-      ctx.fillStyle = kolor;
-      ctx.fillText(et, x, y - 4);
+      const strzalka = kupno ? "▲" : "▼";
+      const et = waski
+        ? `${strzalka} ${ile == null ? "czeka" : (ile >= 0 ? "+" : "") + ile.toFixed(1) + "%"}`
+        : `${strzalka} CZEKA ${kupno ? "kupno" : "sprzedaż"}` +
+          (Number.isFinite(z.kwota_usd) ? ` ${z.kwota_usd.toFixed(0)}$` : "") +
+          (ile == null ? "" : ` · ${ile >= 0 ? "+" : ""}${ile.toFixed(1)}%`);
+      this._plakietka(ctx, y, et, kolor, w, this._zajeteY);
     }
     ctx.restore();
   }
 
+  // SCIANY z arkusza. Wczesniej dlugi tekst od 72% szerokosci wykresu zaslanial
+  // swiece. Teraz krotka plakietka przy skali cen, w tej samej rodzinie co wejscia.
   _sciany(ctx, mediaSize) {
+    const lista = this.sciany ?? [];
+    if (!lista.length) return;
     const w = mediaSize?.width ?? 9999;
+    const waski = w < 620;
+    const zajete = this._zajeteY ?? (this._zajeteY = []);
     ctx.save();
-    ctx.font = "10px Segoe UI";
-    for (const s of (this.sciany ?? [])) {
+    // przy wielu scianach pokazujemy tylko najwieksze, zeby nie zrobic z tego plotu
+    const doPokazania = lista.slice().sort((x, y2) => y2.pct - x.pct).slice(0, waski ? 3 : 6);
+    for (const s of doPokazania) {
       const y = this._s.priceToCoordinate(s.price);
       if (y === null) continue;
-      const kolor = s.side === "kupno" ? "38,166,154" : "239,83,80";
-      ctx.strokeStyle = `rgba(${kolor},0.75)`;
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(w * 0.72, y); ctx.lineTo(w - 64, y); ctx.stroke();
-      ctx.fillStyle = `rgb(${kolor})`;
-      ctx.fillText(`ściana ${s.side} ${Math.round(s.usd / 1000)} tys. $ (${s.pct.toFixed(0)}% obrotu)`,
-                   w * 0.72, y - 4);
+      const kolor = s.side === "kupno" ? "#26a69a" : "#ef5350";
+      ctx.strokeStyle = kolor;
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(w * 0.55, y); ctx.lineTo(w - 64, y); ctx.stroke();
+      ctx.globalAlpha = 1;
+      const tys = s.usd >= 1000 ? `${Math.round(s.usd / 1000)}k` : `${Math.round(s.usd)}`;
+      const et = waski
+        ? `■ ${tys}$`
+        : `■ ściana ${s.side} ${tys}$ · ${s.pct.toFixed(0)}% obrotu`;
+      this._plakietka(ctx, y, et, kolor, w, zajete);
     }
     ctx.restore();
   }
+
 
   // FORMACJA podwojnego dna / szczytu: obrys "W" albo "M" + linia szyi.
   // Zamiast kropki na wykresie widac cala formacje - tak jak sie ja rysuje recznie.
@@ -1604,6 +1637,10 @@ class ChmuraChart {
     };
     el.addEventListener("pointerdown", (e) => { this._naSuwaku = czySuwak(e); }, { passive: true });
     const przywrocSkale = () => {
+      // Tryb RECZNY: uzytkownik sam zdecydowal, ze chce ustawiac skale. Wtedy nie
+      // przywracamy niczego. Wczesniej wszystko opieralo sie na zgadywaniu, czy palec
+      // trafil w os, i to zgadywanie bylo zawodne - stad "suwak nie dziala".
+      if (this.skalaReczna) { this._naSuwaku = false; return; }
       if (this._naSuwaku) { this._naSuwaku = false; return; }   // uzytkownik tak chcial
       const ps = this.chart.priceScale("right");
       if (!ps.options().autoScale) ps.applyOptions({ autoScale: true });
@@ -1810,11 +1847,36 @@ class ChmuraChart {
     return { time: this.data[i].time, price };
   }
 
+  // Przelacznik skali cen. auto = wykres sam dobiera kadr (bezpieczne, nic sie nie
+  // rozjezdza). reczna = mozesz ciagnac os po prawej i zoomowac pionowo, a wykres
+  // tego nie cofa. Powrot do auto jednym kliknieciem, wiec nie da sie zablokowac
+  // w rozjechanym widoku.
+  setSkalaReczna(on) {
+    this.skalaReczna = Boolean(on);
+    const ps = this.chart.priceScale("right");
+    ps.applyOptions({ autoScale: !this.skalaReczna });
+    // w trybie recznym pionowe przeciaganie palcem po ciele wykresu tez ma dzialac,
+    // inaczej na telefonie nie da sie ruszyc skala w ogole
+    this.chart.applyOptions({
+      handleScroll: { ...PRZEWIJANIE, vertTouchDrag: this.skalaReczna },
+    });
+    return this.skalaReczna;
+  }
+
+  // wroc do kadru swiec (przycisk i podwojny klik w os)
+  skalaAuto() {
+    this.skalaReczna = false;
+    this.chart.priceScale("right").applyOptions({ autoScale: true });
+    this.chart.applyOptions({ handleScroll: PRZEWIJANIE });
+  }
+
   _setPan(on) {
     // pan/zoom nie moze sie wlaczyc w POLOWIE przeciagania ani gdy narzedzie uzbrojone
     if (on && (this._dragging || this.tool?.mode)) return;
-    this.chart.applyOptions({ handleScroll: on ? PRZEWIJANIE : false,
-                              handleScale: on ? SKALA : false });
+    this.chart.applyOptions({
+      handleScroll: on ? { ...PRZEWIJANIE, vertTouchDrag: Boolean(this.skalaReczna) } : false,
+      handleScale: on ? SKALA : false,
+    });
     // ZAWSZE "none". Przy "auto" gesty na wykresie obsluguje takze przegladarka
     // (przewijanie strony, pinch-zoom calego widoku) i konkuruje z biblioteka.
     // Skoro to wykres ma decydowac, co wolno, oddajemy mu caly dotyk.
@@ -2697,15 +2759,18 @@ function renderList() {
   const q = $("search").value.trim().toLowerCase();
   const onlyFav = $("only-fav").checked;
   const onlyPoz = $("only-poz").checked;
+  const onlyZlec = $("only-zlec") ? $("only-zlec").checked : false;
   const showAll = $("show-all").checked;
   const volsReady = state.vols.size > 0;
   const volOf = (sym) => state.vols.get(sym)?.vol ?? 0;
   let items = state.symbols
     .filter((s) => (!q || s.symbol.includes(q)) && (!onlyFav || state.fav.has(s.symbol))
-                && (!onlyPoz || state.poz.has(s.symbol)));
+                && (!onlyPoz || state.poz.has(s.symbol))
+                && (!onlyZlec || (state.zlec && state.zlec.has(s.symbol))));
   // domyslnie chowamy male wolumeny; ★ zawsze widoczne; wracaja same gdy wolumen > prog
   if (volsReady && !showAll)
     items = items.filter((s) => state.fav.has(s.symbol) || state.poz.has(s.symbol)
+                            || (state.zlec && state.zlec.has(s.symbol))
                             || volOf(s.symbol) >= PROG_WOLUMENU);
   const zmOf = (sym) => state.vols.get(sym)?.zmiana;
   const zkOf = (sym) => state.vols.get(sym)?.zakres;
@@ -2749,7 +2814,7 @@ function renderList() {
     <a class="sym-row ${s.symbol === state.symbol ? "active" : ""}" data-sym="${s.symbol}"
        href="?coin=${s.symbol}" title="${tip.replace(/"/g, "&quot;")}">
       <span>${s.symbol.toUpperCase().replace(/USDT$/, "")}</span>
-      <span class="sym-meta">${state.poz.has(s.symbol)
+      <span class="sym-meta">${zlecHtml(s.symbol)}${state.poz.has(s.symbol)
         ? `<b style="color:var(--akcent-tekst)">${fmtVolPl(state.poz.get(s.symbol).usd)}</b> · ` : ""}<span data-px="${s.symbol}">${px != null && Number.isFinite(px) ? fmtPx(px) : "—"}</span> ${zmHtml} · ${fmtVolPl(v?.vol)}</span>
       <span class="star ${state.fav.has(s.symbol) ? "fav" : ""}" data-star="${s.symbol}">★</span>
     </a>`;
@@ -2786,6 +2851,21 @@ $("symbol-list").addEventListener("click", async (e) => {
 $("search").addEventListener("input", renderList);
 $("only-fav").addEventListener("change", renderList);
 $("only-poz").addEventListener("change", renderList);
+$("only-zlec") && $("only-zlec").addEventListener("change", renderList);
+
+// Znacznik w wierszu listy: ile zlecen czeka na tej parze i po jakiej cenie.
+// Klik w wiersz przenosi na coina, wiec to jest zarazem skrot nawigacyjny.
+function zlecHtml(sym) {
+  const z = state.zlec && state.zlec.get(sym);
+  if (!z || !z.length) return "";
+  const kupna = z.filter((x) => x.strona === "kupno").length;
+  const sprz = z.length - kupna;
+  const ceny = z.map((x) => fmtPx(+x.cena)).join(", ");
+  const kolor = sprz && !kupna ? "#ef5350" : "#26a69a";
+  const strzalka = sprz && !kupna ? "▼" : "▲";
+  return `<span title="czeka w arkuszu: ${ceny}" style="color:${kolor};font-weight:600">` +
+         `${strzalka}${z.length > 1 ? z.length : ""}</span> `;
+}
 
 // OTWARTE POZYCJE: stan konta z HTX. Cron odswieza co minute, a przycisk obok
 // checkboxa wymusza odczyt od razu - swiezo kupiona pozycja ma byc widoczna zaraz
@@ -2799,8 +2879,26 @@ async function odswiezPozycjeTeraz(btn) {
 }
 
 async function loadPortfel() {
-  const lista = await fetchPortfel();
+  const [lista, zlec] = await Promise.all([
+    fetchPortfel(),
+    fetchZlecenia().catch(() => []),        // wszystkie pary naraz, do filtra listy
+  ]);
   state.poz = new Map(lista.filter((p) => p.symbol).map((p) => [p.symbol, p]));
+  // grupujemy po parze: na jednym coinie moze czekac kilka zlecen
+  state.zlec = new Map();
+  for (const z of zlec) {
+    if (!state.zlec.has(z.symbol)) state.zlec.set(z.symbol, []);
+    state.zlec.get(z.symbol).push(z);
+  }
+  const etZ = $("zlec-ile");
+  if (etZ) etZ.textContent = state.zlec.size ? `(${state.zlec.size})` : "";
+  const chkZ = $("only-zlec");
+  if (chkZ) {
+    chkZ.disabled = state.zlec.size === 0;
+    chkZ.parentElement.title = state.zlec.size
+      ? "pary, na których masz zlecenie czekające w arkuszu HTX"
+      : "brak zleceń czekających";
+  }
   const ile = state.poz.size;
   const et = $("poz-ile");
   if (et) et.textContent = ile ? `(${ile})` : "";
@@ -2847,6 +2945,24 @@ document.querySelectorAll("#iv-mobile button[data-tool], #rys-bar button[data-to
     document.querySelectorAll("[data-tool]").forEach((x) =>
       x.classList.toggle("active", x.dataset.tool === chart.tool.mode));
   }));
+// SKALA CEN: jawny przelacznik zamiast zgadywania, czy palec trafil w os.
+// W trybie recznym mozesz ciagnac os i zoomowac w pionie, a wykres tego nie cofa.
+// W aucie wraca do kadru swiec, wiec nie da sie zostac w rozjechanym widoku.
+function przelaczSkale() {
+  const reczna = chart.setSkalaReczna(!chart.skalaReczna);
+  for (const id of ["btn-skala", "btn-skala-m"]) {
+    const b = $(id);
+    if (!b) continue;
+    b.textContent = id === "btn-skala-m" ? "⇕" : (reczna ? "⇕ ręczna" : "⇕ auto");
+    b.classList.toggle("active", reczna);
+    b.style.color = reczna ? "var(--akcent-tekst)" : "";
+  }
+}
+$("btn-skala") && $("btn-skala").addEventListener("click", przelaczSkale);
+$("btn-skala-m") && $("btn-skala-m").addEventListener("click", przelaczSkale);
+// zmiana coina albo interwalu wraca do bezpiecznego kadru
+const _origLoadSymbol = null;
+
 const odswiezPasek = () => document.querySelectorAll("[data-tool]").forEach((x) => x.classList.remove("active"));
 $("btn-undo").addEventListener("click", () => { chart.eraseTool(false); odswiezPasek(); });
 $("btn-erase").addEventListener("click", () => { chart.eraseTool(true); odswiezPasek(); });
