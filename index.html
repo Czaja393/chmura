@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="22.08-1250";</script></head>
+<script>window.CHMURA_BUILD="22.08-1306";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -1272,16 +1272,15 @@ class ToolPrimitive {
     return { x, y: yy, w: szer, h: wys };
   }
 
-  // MOJE WEJSCIE + CEL. Kompaktowo: procent i kwota, bez powtarzania ceny,
-  // bo cena stoi tuz obok na skali. Klik w plakietke otwiera edycje.
+  // MOJE WEJSCIE: sama linia i etykieta ceny robi teraz biblioteka (createPriceLine).
+  // Tutaj zostaje wylacznie maly UCHWYT przy lewej krawedzi, zeby klikniecie
+  // otwieralo edycje pozycji. Wczesniej caly podpis byl rysowany recznie i zaslanial
+  // wykres, a przy okazji nie pokazywal ceny tam, gdzie uzytkownik jej szuka.
   _wejscia(ctx, mediaSize) {
     this._trafieniaWejsc = [];
     const lista = this.wejscia ?? [];
     if (!lista.length) return;
-    const w = mediaSize?.width ?? 9999;
-    const waski = w < 620;                       // telefon: tylko najwazniejsza liczba
     const teraz = this.cenaBiezaca;
-    const zajete = this._zajeteY ?? [];
     ctx.save();
     for (const p of lista) {
       const y = this._s.priceToCoordinate(p.cena);
@@ -1290,42 +1289,14 @@ class ToolPrimitive {
         ? (p.kierunek === "short" ? (p.cena / teraz - 1) : (teraz / p.cena - 1)) * 100
         : null;
       const kolor = zysk == null ? "#c9c9c0" : (zysk >= 0 ? "#26a69a" : "#ef5350");
-      ctx.strokeStyle = kolor;
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([3, 3]);
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w - 64, y); ctx.stroke();
-      ctx.setLineDash([]);
-      const kwota = Number(p.kwota_usd);
-      const wynikUsd = zysk != null && Number.isFinite(kwota) ? (kwota * zysk / 100) : null;
-      const znak = (v) => (v >= 0 ? "+" : "");
-      const et = waski
-        ? `▸ ${zysk == null ? "wejście" : znak(zysk) + zysk.toFixed(1) + "%"}`
-        : `▸ WEJŚCIE ${zysk == null ? "" : znak(zysk) + zysk.toFixed(2) + "%"}` +
-          (wynikUsd == null ? "" : ` ${znak(wynikUsd)}${wynikUsd.toFixed(2)}$`);
-      const box = this._plakietka(ctx, y, et, kolor, w, zajete);
-      this._trafieniaWejsc.push({ id: p.id, ...box });
-
-      // CEL sprzedazy: druga plakietka, zolta
-      if (Number.isFinite(p.cel) && p.cel > 0) {
-        const yc = this._s.priceToCoordinate(p.cel);
-        if (yc !== null) {
-          ctx.strokeStyle = "#e3f50a";
-          ctx.lineWidth = 1;
-          ctx.setLineDash([5, 4]);
-          ctx.beginPath(); ctx.moveTo(0, yc); ctx.lineTo(w - 64, yc); ctx.stroke();
-          ctx.setLineDash([]);
-          const zCelu = (p.cel / p.cena - 1) * 100;
-          const doCelu = Number.isFinite(teraz) ? (p.cel / teraz - 1) * 100 : null;
-          const zyskUsd = Number.isFinite(kwota) ? kwota * zCelu / 100 : null;
-          const etC = waski
-            ? `🎯 ${znak(zCelu)}${zCelu.toFixed(1)}%`
-            : `🎯 CEL ${znak(zCelu)}${zCelu.toFixed(1)}%` +
-              (zyskUsd == null ? "" : ` ${znak(zyskUsd)}${zyskUsd.toFixed(2)}$`) +
-              (doCelu == null ? "" : ` · brak ${znak(doCelu)}${doCelu.toFixed(1)}%`);
-          const boxC = this._plakietka(ctx, yc, etC, "#e3f50a", w, zajete);
-          this._trafieniaWejsc.push({ id: p.id, ...boxC });
-        }
-      }
+      ctx.fillStyle = kolor;
+      ctx.beginPath();
+      if (ctx.roundRect) { ctx.roundRect(4, y - 7, 14, 14, 3); ctx.fill(); }
+      else ctx.fillRect(4, y - 7, 14, 14);
+      ctx.fillStyle = "#0b0b0b";
+      ctx.font = "700 10px Segoe UI";
+      ctx.fillText("✎", 7, y + 4);
+      this._trafieniaWejsc.push({ id: p.id, x: 4, y: y - 7, w: 14, h: 14 });
     }
     ctx.restore();
   }
@@ -1333,35 +1304,11 @@ class ToolPrimitive {
   // ZLECENIA CZEKAJACE w arkuszu HTX: gdzie dokladnie stoja Twoje limity.
   // Rysowane inaczej niz wejscie: cienka linia z podpisem po PRAWEJ, zeby nie mylily
   // sie z linia pozycji. Kupno na zielono, sprzedaz na czerwono - jak w arkuszu.
-  _zlecenia(ctx, mediaSize) {
-    const lista = this.zlecenia ?? [];
-    // wspolna lista zajetych miejsc dla wszystkich plakietek na wykresie
+  // ZLECENIA CZEKAJACE rysuje juz biblioteka jako linie cenowe z etykieta na osi,
+  // wiec tutaj nie ma nic do roboty. Zostawiamy metode, bo petla rysowania ja wola
+  // i to ona zeruje liste zajetych miejsc dla plakietek scian.
+  _zlecenia(_ctx, _mediaSize) {
     this._zajeteY = [];
-    if (!lista.length) return;
-    const w = mediaSize?.width ?? 9999;
-    const waski = w < 620;
-    const teraz = this.cenaBiezaca;
-    ctx.save();
-    for (const z of lista) {
-      const y = this._s.priceToCoordinate(z.cena);
-      if (y === null) continue;
-      const kupno = z.strona === "kupno";
-      const kolor = kupno ? "#26a69a" : "#ef5350";
-      ctx.strokeStyle = kolor;
-      ctx.lineWidth = 1;
-      ctx.setLineDash([1, 4]);
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w - 64, y); ctx.stroke();
-      ctx.setLineDash([]);
-      const ile = Number.isFinite(teraz) && teraz > 0 ? (z.cena / teraz - 1) * 100 : null;
-      const strzalka = kupno ? "▲" : "▼";
-      const et = waski
-        ? `${strzalka} ${ile == null ? "czeka" : (ile >= 0 ? "+" : "") + ile.toFixed(1) + "%"}`
-        : `${strzalka} CZEKA ${kupno ? "kupno" : "sprzedaż"}` +
-          (Number.isFinite(z.kwota_usd) ? ` ${z.kwota_usd.toFixed(0)}$` : "") +
-          (ile == null ? "" : ` · ${ile >= 0 ? "+" : ""}${ile.toFixed(1)}%`);
-      this._plakietka(ctx, y, et, kolor, w, this._zajeteY);
-    }
-    ctx.restore();
   }
 
   // SCIANY z arkusza. Wczesniej dlugi tekst od 72% szerokosci wykresu zaslanial
@@ -1625,31 +1572,30 @@ class ChmuraChart {
     //  - ciagniecie ZA SUWAK skali po prawej = swiadoma regulacja, zostawiamy w spokoju
     //  - przeciagniecie po ciele wykresu = przypadek, wracamy do kadru swiec
     // Bez tego rozroznienia albo wykres sam sie rozjezdzal, albo suwak byl bezuzyteczny.
-    this._naSuwaku = false;
-    // szerokosc osi bywa chwilowo zerowa (wykres jeszcze nie przeliczony), wiec
-    // trzymamy ostatnia sensowna wartosc zamiast zgadywac za kazdym razem
-    this._szerOsi = 60;
-    const czySuwak = (e) => {
-      const w = this.chart.priceScale("right").width();
-      if (w > 10) this._szerOsi = w;
-      const r = el.getBoundingClientRect();
-      return (e.clientX ?? 0) >= r.right - this._szerOsi - 6;
-    };
-    el.addEventListener("pointerdown", (e) => { this._naSuwaku = czySuwak(e); }, { passive: true });
-    const przywrocSkale = () => {
-      // Tryb RECZNY: uzytkownik sam zdecydowal, ze chce ustawiac skale. Wtedy nie
-      // przywracamy niczego. Wczesniej wszystko opieralo sie na zgadywaniu, czy palec
-      // trafil w os, i to zgadywanie bylo zawodne - stad "suwak nie dziala".
-      if (this.skalaReczna) { this._naSuwaku = false; return; }
-      if (this._naSuwaku) { this._naSuwaku = false; return; }   // uzytkownik tak chcial
+    // STRAZNIK KADRU. Wczesniej po KAZDYM puszczeniu palca wracalismy do autoScale,
+    // wiec rozciagniecie skali natychmiast sie cofalo - to jest dokladnie objaw
+    // zgloszony przez uzytkownika ("rozwija sie na chwile, a jak puszcze, wraca").
+    //
+    // Teraz nie cofamy nic, dopoki wykres jest uzywalny. Interweniujemy tylko wtedy,
+    // gdy biezaca cena wypadla POZA widoczny obszar, czyli gdy wykres naprawde sie
+    // rozjechal i nie ma juz czego ogladac. Powrot do auto jest tez pod przyciskiem
+    // i pod podwojnym klikiem w os.
+    const pilnujKadru = () => {
+      if (this.skalaReczna) return;          // tryb reczny: uzytkownik wie, co robi
       const ps = this.chart.priceScale("right");
-      if (!ps.options().autoScale) ps.applyOptions({ autoScale: true });
+      if (ps.options().autoScale) return;    // nic nie ruszal
+      const ost = this.data && this.data.length ? this.data[this.data.length - 1] : null;
+      if (!ost) return;
+      const y = this.candles.priceToCoordinate(ost.close);
+      const h = el.getBoundingClientRect().height;
+      // margines 8 px: cena dokladnie na krawedzi tez znaczy, ze uciekla
+      const widoczna = y !== null && y > 8 && y < h - 8;
+      if (!widoczna) ps.applyOptions({ autoScale: true });
     };
-    for (const zdarz of ["mouseup", "touchend", "touchcancel", "mouseleave"])
-      el.addEventListener(zdarz, przywrocSkale, { passive: true });
-    // takze na oknie: gdy biblioteka przechwyci wskaznik, puszczenie moze wypasc poza #chart
+    for (const zdarz of ["mouseup", "touchend", "touchcancel"])
+      el.addEventListener(zdarz, pilnujKadru, { passive: true });
     for (const zdarz of ["pointerup", "pointercancel"])
-      window.addEventListener(zdarz, przywrocSkale, { passive: true });
+      window.addEventListener(zdarz, pilnujKadru, { passive: true });
 
     this.tool = new ToolPrimitive(this.chart, this.candles, () => this.data);
     this.candles.attachPrimitive(this.tool);
@@ -1847,6 +1793,57 @@ class ChmuraChart {
     return { time: this.data[i].time, price };
   }
 
+  // Wejscia, cele i zlecenia jako natywne linie cenowe. Biblioteka sama klade
+  // etykiete CENY na osi, obok ceny biezacej - o to prosil uzytkownik.
+  _odswiezLinie() {
+    for (const l of (this._linie ?? [])) {
+      try { this.candles.removePriceLine(l); } catch (_e) { /* seria mogla sie zmienic */ }
+    }
+    this._linie = [];
+    const dodaj = (cena, kolor, tytul, styl) => {
+      if (!Number.isFinite(cena) || cena <= 0) return;
+      this._linie.push(this.candles.createPriceLine({
+        price: cena,
+        color: kolor,
+        lineWidth: 1,
+        lineStyle: styl,          // 0 solid, 1 dotted, 2 dashed
+        axisLabelVisible: true,   // TO jest ta stala etykieta ceny na osi
+        title: tytul,
+      }));
+    };
+    const teraz = this.tool.cenaBiezaca;
+    // zlecenia czekajace: kolor jak w arkuszu
+    for (const z of (this.tool.zlecenia ?? [])) {
+      const kupno = z.strona === "kupno";
+      // jesli to zlecenie realizuje ktorys z celow, pokaz od razu zysk z wejscia
+      const wej = (this.tool.wejscia ?? []).find(
+        (p) => Number.isFinite(p.cel) && Math.abs(z.cena / p.cel - 1) < 0.005);
+      const zysk = wej ? (z.cena / wej.cena - 1) * 100 : null;
+      const opis = (kupno ? "czeka kupno" : "czeka sprzedaż") +
+        (zysk == null ? "" : ` · cel ${zysk >= 0 ? "+" : ""}${zysk.toFixed(1)}%`);
+      dodaj(z.cena, kupno ? "#26a69a" : "#ef5350", opis, 1);
+    }
+    // wejscia i cele
+    for (const p of (this.tool.wejscia ?? [])) {
+      const zysk = Number.isFinite(teraz) && p.cena > 0 ? (teraz / p.cena - 1) * 100 : null;
+      const kolor = zysk == null ? "#c9c9c0" : (zysk >= 0 ? "#26a69a" : "#ef5350");
+      const opis = zysk == null ? "wejście"
+        : `wejście ${zysk >= 0 ? "+" : ""}${zysk.toFixed(1)}%`;
+      dodaj(p.cena, kolor, opis, 2);
+      if (Number.isFinite(p.cel) && p.cel > 0) {
+        // Gdy na tej samej cenie stoi juz PRAWDZIWE zlecenie w arkuszu, nie rysujemy
+        // drugiej linii. Recznie wpisany cel jest tylko planem; jesli zlecenie
+        // faktycznie zlozone, to ono jest prawda i wystarczy jedna linia.
+        const jestZlecenie = (this.tool.zlecenia ?? []).some(
+          (z) => Math.abs(z.cena / p.cel - 1) < 0.005);
+        if (!jestZlecenie) {
+          const zCelu = (p.cel / p.cena - 1) * 100;
+          dodaj(p.cel, "#e3f50a", `cel ${zCelu >= 0 ? "+" : ""}${zCelu.toFixed(1)}%`, 2);
+        }
+      }
+    }
+  }
+
   // Przelacznik skali cen. auto = wykres sam dobiera kadr (bezpieczne, nic sie nie
   // rozjezdza). reczna = mozesz ciagnac os po prawej i zoomowac pionowo, a wykres
   // tego nie cofa. Powrot do auto jednym kliknieciem, wiec nie da sie zablokowac
@@ -1887,7 +1884,6 @@ class ChmuraChart {
     this.data = rows;
     // zmiana coina zawsze zaczyna od kadru swiec - recznie ustawiona skala
     // poprzedniej pary nie ma sensu dla nowej
-    this._naSuwaku = false;
     this.chart.priceScale("right").applyOptions({ autoScale: true });
     this.candles.setData(rows);
     this.volume.setData(rows.map((r) => ({
@@ -2177,11 +2173,13 @@ class ChmuraChart {
 
   // MOJE WEJSCIA: linie z cena zakupu i wynikiem na biezaco
   setWejscia(lista) {
+    this._trzebaOdswiezycLinie = true;
     this.tool.wejscia = (lista || []).map((p) => ({
       id: p.id, cena: +p.cena, kwota_usd: p.kwota_usd == null ? null : +p.kwota_usd,
       ilosc: p.ilosc == null ? null : +p.ilosc, kierunek: p.kierunek || "long",
       cel: p.cena_wyjscia == null ? null : +p.cena_wyjscia,
     }));
+    this._odswiezLinie();
     this.tool.refresh();
   }
   // cena biezaca wstrzykiwana z websocketu - bez niej nie da sie policzyc wyniku
@@ -2189,6 +2187,13 @@ class ChmuraChart {
     if (!Number.isFinite(px)) return;
     const stara = this.tool.cenaBiezaca;
     this.tool.cenaBiezaca = px;
+    // tytul linii wejscia zawiera aktualny wynik, wiec trzeba go odswiezac - ale
+    // rzadko, bo kazde odswiezenie kasuje i tworzy linie od nowa
+    const teraz = Date.now();
+    if ((this.tool.wejscia ?? []).length && teraz - (this._linieTs ?? 0) > 3000) {
+      this._linieTs = teraz;
+      this._odswiezLinie();
+    }
     // przerysowujemy tylko gdy sa wejscia i cena faktycznie sie zmienila
     if ((this.tool.wejscia ?? []).length && stara !== px) this.tool.refresh();
   }
@@ -2199,6 +2204,7 @@ class ChmuraChart {
       id: z.id, strona: z.strona, cena: +z.cena, ilosc: +z.ilosc,
       kwota_usd: z.kwota_usd == null ? null : +z.kwota_usd,
     }));
+    this._odswiezLinie();
     this.tool.refresh();
   }
 
