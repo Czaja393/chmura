@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="22.08-1230";</script></head>
+<script>window.CHMURA_BUILD="22.08-1237";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -682,6 +682,13 @@ async function fetchNotatki(symbol = null) {
   return rest(`notatki?select=id,symbol,tytul,tresc,ts,przypomnienie,wyslane,na_wykresie_ts,na_wykresie_px` +
               (symbol ? `&symbol=eq.${symbol}` : "") + `&order=ts.desc&limit=300`);
 }
+// ZLECENIA CZEKAJACE w arkuszu HTX (lustro /v1/order/openOrders, odswiezane razem
+// z portfelem). To takze zlecenia zlozone recznie w aplikacji gieldy.
+async function fetchZlecenia(symbol = null) {
+  return rest(`zlecenia_otwarte?select=id,symbol,strona,typ,cena,ilosc,kwota_usd,zlozone` +
+              (symbol ? `&symbol=eq.${symbol}` : "") + `&order=cena.desc&limit=200`);
+}
+
 // MOJE WEJSCIA: reczne znaczniki pozycji na wykresie (cena zakupu + wynik na zywo)
 async function fetchWejscia(symbol) {
   return rest(`moje_wejscia?symbol=eq.${symbol}&zamkniete=is.false` +
@@ -1108,6 +1115,7 @@ class ToolPrimitive {
           this._sciany(ctx, mediaSize);
           this._alarmy(ctx, mediaSize);
           this._notatki(ctx, mediaSize);
+          this._zlecenia(ctx, mediaSize);
           this._wejscia(ctx, mediaSize);
           for (const f of (this.formacje ?? [])) this._formacja(ctx, f, mediaSize);
           for (const k of (this.auto ?? [])) this._kanalAuto(ctx, k);
@@ -1292,6 +1300,45 @@ class ToolPrimitive {
           this._trafieniaWejsc.push({ id: p.id, x: 6, y: yc - 15, w: szerC + 10, h: 14 });
         }
       }
+    }
+    ctx.restore();
+  }
+
+  // ZLECENIA CZEKAJACE w arkuszu HTX: gdzie dokladnie stoja Twoje limity.
+  // Rysowane inaczej niz wejscie: cienka linia z podpisem po PRAWEJ, zeby nie mylily
+  // sie z linia pozycji. Kupno na zielono, sprzedaz na czerwono - jak w arkuszu.
+  _zlecenia(ctx, mediaSize) {
+    const lista = this.zlecenia ?? [];
+    if (!lista.length) return;
+    const w = mediaSize?.width ?? 9999;
+    const teraz = this.cenaBiezaca;
+    ctx.save();
+    ctx.font = "10px Segoe UI";
+    for (const z of lista) {
+      const y = this._s.priceToCoordinate(z.cena);
+      if (y === null) continue;
+      const kupno = z.strona === "kupno";
+      const kolor = kupno ? "#26a69a" : "#ef5350";
+      ctx.strokeStyle = kolor;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([1, 3]);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w - 62, y); ctx.stroke();
+      ctx.setLineDash([]);
+      // trojkacik pokazujacy, z ktorej strony czeka zlecenie
+      ctx.beginPath();
+      if (kupno) { ctx.moveTo(4, y - 4); ctx.lineTo(4, y + 4); ctx.lineTo(11, y); }
+      else { ctx.moveTo(4, y - 4); ctx.lineTo(11, y - 4); ctx.lineTo(7.5, y + 3); }
+      ctx.closePath(); ctx.fillStyle = kolor; ctx.fill();
+      const ile = Number.isFinite(teraz) && teraz > 0 ? (z.cena / teraz - 1) * 100 : null;
+      const et = `CZEKA ${kupno ? "kupno" : "sprzedaz"} ${fp(z.cena)}` +
+        (Number.isFinite(z.kwota_usd) ? ` · ${z.kwota_usd.toFixed(0)} $` : "") +
+        (ile == null ? "" : ` · ${ile >= 0 ? "+" : ""}${ile.toFixed(2)}% od ceny`);
+      const szer = ctx.measureText(et).width;
+      const x = Math.max(14, w - 68 - szer);
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(x - 4, y - 13, szer + 8, 12);
+      ctx.fillStyle = kolor;
+      ctx.fillText(et, x, y - 4);
     }
     ctx.restore();
   }
@@ -2084,6 +2131,15 @@ class ChmuraChart {
     if ((this.tool.wejscia ?? []).length && stara !== px) this.tool.refresh();
   }
 
+  // ZLECENIA CZEKAJACE: Twoje limity stojace w arkuszu HTX
+  setZlecenia(lista) {
+    this.tool.zlecenia = (lista || []).map((z) => ({
+      id: z.id, strona: z.strona, cena: +z.cena, ilosc: +z.ilosc,
+      kwota_usd: z.kwota_usd == null ? null : +z.kwota_usd,
+    }));
+    this.tool.refresh();
+  }
+
   // SCIANY z arkusza: gruba pozioma kreska na poziomie duzego zlecenia
   setSciany(lista) {
     this.tool.sciany = (lista || []).map((w) => ({
@@ -2738,6 +2794,7 @@ async function odswiezPozycjeTeraz(btn) {
   if (btn) { btn.disabled = true; btn.textContent = "…"; }
   await odswiezPortfelTeraz();
   await loadPortfel();
+  await odswiezWejscia();          // limity w arkuszu mogly sie zmienic
   if (btn) { btn.disabled = false; btn.textContent = "↻"; }
 }
 
@@ -3138,9 +3195,13 @@ $("btn-obserwacje").addEventListener("click", () => pokazObserwacje());
 // Klik narzedziem na wykresie ustawia cene, ale kazda wartosc da sie poprawic recznie,
 // bo klikniecie rzadko trafia dokladnie w cene z gieldy.
 async function odswiezWejscia(sym = state.symbol) {
-  const w = await fetchWejscia(sym).catch(() => []);
+  const [w, z] = await Promise.all([
+    fetchWejscia(sym).catch(() => []),
+    fetchZlecenia(sym).catch(() => []),
+  ]);
   if (state.symbol === sym) {
     chart.setWejscia(w);
+    chart.setZlecenia(z);          // Twoje limity czekajace w arkuszu
     chart.setCenaBiezaca(state.lastPx[sym]);
   }
 }
