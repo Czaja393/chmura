@@ -74,6 +74,11 @@
   .sym-row.active { background: #E3F50A14; box-shadow: inset 2px 0 0 var(--accent); }
   .sym-row .sym-meta { margin-left: auto; color: var(--muted); font-size: 11px;
     font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* zmiana doby na zielono/czerwono (jak na TradingView) + zakres doby szaro obok */
+  .sym-row .sym-meta .zm { font-weight: 600; }
+  .sym-row .sym-meta .zm.up { color: #26a69a; }
+  .sym-row .sym-meta .zm.dn { color: #ef5350; }
+  .sym-row .sym-meta .zk { color: #8a8a80; font-size: 10px; }
   .sym-row .star { color: var(--muted); cursor: pointer; }
   .sym-row .star.fav { color: var(--akcent-tekst); }
   #list-opts { display: flex; align-items: center; gap: 8px; padding: 2px 12px 6px; }
@@ -181,6 +186,13 @@
     /* palcem trafia sie gorzej niz myszka */
     .menu { min-width: 240px; padding: 8px; }
     .menu-poz, .menu label { padding: 11px 12px; font-size: 13px; }
+    /* Filtry listy na telefonie: pole 13x13 px to za malo, zeby w nie trafic palcem.
+       Zalecane minimum to ok. 44 px, wiec powiekszamy i sam checkbox, i obszar kliku. */
+    aside > div > label { display: flex; align-items: center; gap: 10px;
+      min-height: 40px; font-size: 13px; }
+    aside input[type="checkbox"] { width: 20px; height: 20px; flex: none; }
+    #list-opts { padding: 4px 12px 8px; gap: 10px; }
+    #poz-odswiez { min-width: 40px; min-height: 34px; font-size: 16px; }
     .only-desktop { display: none; }
     aside, #right {
       position: fixed; top: 44px; bottom: 0; width: min(85vw, 340px); z-index: 60;
@@ -194,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="21.08-0756";</script></head>
+<script>window.CHMURA_BUILD="22.08-1230";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -277,7 +289,7 @@
   <aside>
     <input id="search" placeholder="Szukaj pary… (np. fun)">
     <div style="padding:0 12px" class="muted"><label><input type="checkbox" id="only-fav"> tylko obserwowane ★</label></div>
-    <div style="padding:0 12px" class="muted"><label title="to, co faktycznie masz na koncie HTX"><input type="checkbox" id="only-poz"> otwarte pozycje <span id="poz-ile"></span></label></div>
+    <div style="padding:0 12px;display:flex;align-items:center;gap:6px" class="muted"><label title="to, co faktycznie masz na koncie HTX"><input type="checkbox" id="only-poz"> otwarte pozycje <span id="poz-ile"></span></label><button class="tool-btn" id="poz-odswiez" title="odśwież stan konta teraz, bez czekania na kolektor" style="border:1px solid var(--border);padding:0 6px;line-height:18px">↻</button></div>
     <div id="list-opts" class="muted">
       <label title="pokaż też pary z wolumenem poniżej 200 tys. $"><input type="checkbox" id="show-all"> pokaż wszystkie</label>
       <button class="tool-btn" id="btn-sort" title="kolejność listy">Wolumen ↓</button>
@@ -291,6 +303,8 @@
       <button data-tool="channel" title="Kanał równoległy - przeciągnij, potem kliknij szerokość">▤</button>
       <button data-tool="rect"    title="Prostokąt - przeciągnij">▭</button>
       <button data-tool="alarm"   title="Alarm cenowy - kliknij na wykresie, dostaniesz powiadomienie na Telegramie">🔔</button>
+      <button data-tool="notatka" title="Notatka przypięta do wykresu - kliknij świecę albo formację, do której chcesz ją przykleić">📌</button>
+      <button data-tool="wejscie" title="Moje wejście - kliknij cenę zakupu; linia pokaże zysk lub stratę na bieżąco (cenę można potem poprawić ręcznie)">📍</button>
       <button data-tool="ruler"   title="Miarka % - przeciągnij">📏</button>
       <button data-tool="fibo2"   title="Fibo 2 punkty - przeciągnij od dołka do szczytu">ƒ</button>
       <span class="rys-sep"></span>
@@ -311,6 +325,8 @@
       <button data-tool="hline" title="linia pozioma">━</button>
       <button data-tool="channel" title="kanał równoległy">▤</button>
       <button data-tool="alarm" title="alarm cenowy">🔔</button>
+      <button data-tool="notatka" title="notatka przypięta do punktu">📌</button>
+      <button data-tool="wejscie" title="moje wejście z wynikiem na żywo">📍</button>
       <button id="btn-undo-m" title="cofnij rysunek">↶</button>
       <button id="btn-erase-m" title="usuń zaznaczony rysunek">🗑</button>
     </div>
@@ -549,8 +565,21 @@ async function fetchLiveSignals() {
 async function fetchDailyVolumes() {
   const out = new Map();
   for (let off = 0; off < 4000; off += 1000) {
-    const page = await rest(`vol24?select=symbol,vol24,close&limit=1000&offset=${off}`);
-    for (const r of page) out.set(r.symbol, { vol: +r.vol24, close: +r.close });
+    const page = await rest(`vol24?select=symbol,vol24,close,zmiana_pct,zakres_pct,spread_pct,ats24,swiec` +
+                            `&limit=1000&offset=${off}`);
+    for (const r of page) {
+      out.set(r.symbol, {
+        vol: +r.vol24,
+        close: +r.close,
+        // zmiana = kierunek doby, zakres = ile cena sie miotala (to dwie rozne rzeczy:
+        // maly coin potrafi miec zmiane 0% i zakres 50%)
+        zmiana: r.zmiana_pct == null ? null : +r.zmiana_pct,
+        zakres: r.zakres_pct == null ? null : +r.zakres_pct,
+        ats: r.ats24 == null ? null : +r.ats24,
+        spread: r.spread_pct == null ? null : +r.spread_pct,
+        swiec: r.swiec == null ? null : +r.swiec,
+      });
+    }
     if (page.length < 1000) break;
   }
   return out;
@@ -570,7 +599,19 @@ async function fetchFormacje(tylkoZPrzewaga = true) {
   return tylkoZPrzewaga ? out.filter((r) => r.d.alert) : out;
 }
 
-// PORTFEL: co faktycznie mamy na koncie HTX (odswiezane cronem co 5 minut)
+// Wymusza odswiezenie stanu konta TERAZ, nie czekajac na crona. Osobna, waska
+// funkcja brzegowa: przyjmuje wylacznie to jedno zadanie, wiec klucz anon aplikacji
+// (ktory jest jawny) nie daje przez nia dostepu do egzekutora.
+async function odswiezPortfelTeraz() {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/odswiez`, { method: "POST" });
+    return r.ok;
+  } catch (_e) {
+    return false;
+  }
+}
+
+// PORTFEL: co faktycznie mamy na koncie HTX (cron co minute + przycisk odswiezenia)
 async function fetchPortfel() {
   try {
     return await rest("portfel?select=waluta,symbol,ile,usd,ts&order=usd.desc");
@@ -638,8 +679,63 @@ async function usunZListy(symbol, lista) {
 
 // NOTATNIK
 async function fetchNotatki(symbol = null) {
-  return rest(`notatki?select=id,symbol,tytul,tresc,ts,przypomnienie,wyslane` +
+  return rest(`notatki?select=id,symbol,tytul,tresc,ts,przypomnienie,wyslane,na_wykresie_ts,na_wykresie_px` +
               (symbol ? `&symbol=eq.${symbol}` : "") + `&order=ts.desc&limit=300`);
+}
+// MOJE WEJSCIA: reczne znaczniki pozycji na wykresie (cena zakupu + wynik na zywo)
+async function fetchWejscia(symbol) {
+  return rest(`moje_wejscia?symbol=eq.${symbol}&zamkniete=is.false` +
+              `&select=id,symbol,cena,ilosc,kwota_usd,cena_wyjscia,kierunek,ts,notatka&order=ts.desc&limit=50`);
+}
+async function dodajWejscie(w) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/moje_wejscia`, {
+    method: "POST",
+    headers: { ...H, "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify(w),
+  });
+  if (!r.ok) throw new Error(`wejscie: ${r.status}`);
+  return (await r.json())[0];
+}
+async function zmienWejscie(id, zmiany) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/moje_wejscia?id=eq.${id}`, {
+    method: "PATCH",
+    headers: { ...H, "Content-Type": "application/json" },
+    body: JSON.stringify(zmiany),
+  });
+  if (!r.ok) throw new Error(`wejscie: ${r.status}`);
+}
+async function usunWejscie(id) {
+  await fetch(`${SUPABASE_URL}/rest/v1/moje_wejscia?id=eq.${id}`, { method: "DELETE", headers: H });
+}
+
+// KARTOTEKA RYZYKA POMPY: historia fal tego coina (widok ryzyko_pompy nad tabela waves).
+// Zwraca null, gdy coin nie mial ani jednej pelnej fali od 2021 - to tez informacja.
+async function fetchRyzykoPompy(symbol) {
+  const r = await rest(`ryzyko_pompy?symbol=eq.${symbol}&select=*&limit=1`);
+  if (!r.length) return null;
+  const x = r[0];
+  return {
+    fal: +x.fal,
+    mediana_przerwy_dni: x.mediana_przerwy_dni == null ? null : +x.mediana_przerwy_dni,
+    mediana_zniesienia: x.mediana_zniesienia == null ? null : +x.mediana_zniesienia,
+    max_zniesienie: x.max_zniesienie == null ? null : +x.max_zniesienie,
+    mediana_wzrostu: x.mediana_wzrostu == null ? null : +x.mediana_wzrostu,
+    mediana_mult: x.mediana_mult == null ? null : +x.mediana_mult,
+    ostatnia_fala: x.ostatnia_fala,
+    dni_od_ostatniej: x.dni_od_ostatniej == null ? null : +x.dni_od_ostatniej,
+    w_oknie_fali: Boolean(x.w_oknie_fali),
+    ocena: x.ocena,
+  };
+}
+// caly ranking - do listy "czego unikac"
+async function fetchRyzykoRanking(limit = 40) {
+  return rest(`ryzyko_pompy?select=*&order=fal.desc&limit=${limit}`);
+}
+
+// notatki PRZYPIETE do punktu na wykresie danego coina (pinezki)
+async function fetchNotatkiWykres(symbol) {
+  return rest(`notatki?select=id,tytul,tresc,ts,na_wykresie_ts,na_wykresie_px` +
+              `&symbol=eq.${symbol}&na_wykresie_ts=not.is.null&order=na_wykresie_ts.asc&limit=200`);
 }
 async function dodajNotatke(n) {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/notatki`, {
@@ -652,6 +748,14 @@ async function dodajNotatke(n) {
 }
 async function usunNotatke(id) {
   await fetch(`${SUPABASE_URL}/rest/v1/notatki?id=eq.${id}`, { method: "DELETE", headers: H });
+}
+// zdejmij pinezke, ale ZOSTAW notatke w notatniku
+async function odepnijNotatke(id) {
+  await fetch(`${SUPABASE_URL}/rest/v1/notatki?id=eq.${id}`, {
+    method: "PATCH",
+    headers: { ...H, "Content-Type": "application/json" },
+    body: JSON.stringify({ na_wykresie_ts: null, na_wykresie_px: null }),
+  });
 }
 
 async function fetchDelistings(symbol) {
@@ -719,27 +823,51 @@ async function fetchNews(limit = 40) {
 }
 
 const descCache = new Map();
+// Opis coina PO POLSKU. Zrodlem pierwszego wyboru jest tabela `coin_info`, ktora
+// kolektor uzupelnia i TLUMACZY (CoinGecko prawie nigdy nie ma wersji `pl`).
+// Gdy coina jeszcze nie przemielilismy, pytamy CoinGecko wprost - wtedy opis
+// bedzie po angielsku, ale okno cos pokaze zamiast pustki.
 async function fetchCoinDescription(symbol) {
   const base = symbol.replace(/usdt$/, "");
   if (descCache.has(base)) return descCache.get(base);
   let out = null;
   try {
-    const s = await (await fetch(`https://api.coingecko.com/api/v3/search?query=${base}`)).json();
-    const coin = (s.coins || []).find((c) => String(c.symbol).toLowerCase() === base);
-    if (coin) {
-      const d = await (await fetch(`https://api.coingecko.com/api/v3/coins/${coin.id}?localization=true&tickers=false&market_data=true&community_data=false&developer_data=false`)).json();
+    const c = await rest(`coin_info?symbol=eq.${symbol}&select=nazwa,rank,kategorie,opis_pl,opis_zrodlo,strona,mcap,updated_at&limit=1`);
+    if (c.length && c[0].opis_pl) {
       out = {
-        name: d?.name ?? coin.name,
-        symbol: String(coin.symbol).toUpperCase(),
-        rank: d?.market_cap_rank ?? null,
-        categories: (d?.categories || []).filter(Boolean).slice(0, 5),
-        desc: (d?.description?.pl || d?.description?.en || "").replace(/<[^>]+>/g, "").trim(),
-        isPl: Boolean(d?.description?.pl),
-        home: d?.links?.homepage?.[0] || null,
-        mcap: d?.market_data?.market_cap?.usd ?? null,
+        name: c[0].nazwa || base.toUpperCase(),
+        symbol: base.toUpperCase(),
+        rank: c[0].rank ?? null,
+        categories: Array.isArray(c[0].kategorie) ? c[0].kategorie : [],
+        desc: c[0].opis_pl,
+        isPl: true,
+        tlumaczone: c[0].opis_zrodlo === "tlumaczone",
+        home: c[0].strona || null,
+        mcap: c[0].mcap ?? null,
       };
     }
-  } catch (_e) { /* limit CoinGecko */ }
+  } catch (_e) { /* brak wpisu w cache - lecimy do CoinGecko */ }
+  if (!out) {
+    try {
+      const s = await (await fetch(`https://api.coingecko.com/api/v3/search?query=${base}`)).json();
+      const coin = (s.coins || []).find((c) => String(c.symbol).toLowerCase() === base);
+      if (coin) {
+        const d = await (await fetch(`https://api.coingecko.com/api/v3/coins/${coin.id}?localization=true&tickers=false&market_data=true&community_data=false&developer_data=false`)).json();
+        out = {
+          name: d?.name ?? coin.name,
+          symbol: String(coin.symbol).toUpperCase(),
+          rank: d?.market_cap_rank ?? null,
+          categories: (d?.categories || []).filter(Boolean).slice(0, 5),
+          desc: (d?.description?.pl || d?.description?.en || "").replace(/<[^>]+>/g, "").trim(),
+          isPl: Boolean(d?.description?.pl),
+          tlumaczone: false,
+          czekaNaTlumaczenie: true,
+          home: d?.links?.homepage?.[0] || null,
+          mcap: d?.market_data?.market_cap?.usd ?? null,
+        };
+      }
+    } catch (_e) { /* limit CoinGecko */ }
+  }
   descCache.set(base, out);
   return out;
 }
@@ -979,6 +1107,8 @@ class ToolPrimitive {
           this._poziomy(ctx, mediaSize);
           this._sciany(ctx, mediaSize);
           this._alarmy(ctx, mediaSize);
+          this._notatki(ctx, mediaSize);
+          this._wejscia(ctx, mediaSize);
           for (const f of (this.formacje ?? [])) this._formacja(ctx, f, mediaSize);
           for (const k of (this.auto ?? [])) this._kanalAuto(ctx, k);
           this.drawings.forEach((d, idx) => {
@@ -1048,6 +1178,120 @@ class ToolPrimitive {
       ctx.setLineDash([]);
       ctx.fillStyle = "#ffa726";
       ctx.fillText(`🔔 alarm ${fp(a.price)} (${a.kierunek})`, 8, y - 4);
+    }
+    ctx.restore();
+  }
+
+  // NOTATKI przypiete do punktu na wykresie: pinezka na (czas, cena) + krotki podpis.
+  // Pelna tresc pokazuje sie po kliknieciu - trafienia zbieramy tutaj, bo tylko tu
+  // znamy realne wspolrzedne po kazdym przesunieciu i zoomie.
+  _notatki(ctx, mediaSize) {
+    this._trafieniaNotatek = [];
+    const lista = this.notatki ?? [];
+    if (!lista.length) return;
+    const ts = this._c.timeScale();
+    const w = mediaSize?.width ?? 9999;
+    ctx.save();
+    ctx.font = "11px Segoe UI";
+    for (const n of lista) {
+      const x = ts.timeToCoordinate(n.time);
+      const y = this._s.priceToCoordinate(n.price);
+      if (x === null || y === null) continue;
+      // pinezka: kolo z ogonkiem w dol, zeby czubek wskazywal dokladny punkt
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - 5, y - 9);
+      ctx.lineTo(x + 5, y - 9);
+      ctx.closePath();
+      ctx.fillStyle = "#e3f50a";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x, y - 14, 6, 0, Math.PI * 2);
+      ctx.fillStyle = "#e3f50a";
+      ctx.fill();
+      ctx.fillStyle = "#000";
+      ctx.font = "bold 9px Segoe UI";
+      ctx.textAlign = "center";
+      ctx.fillText("N", x, y - 11);
+      ctx.textAlign = "left";
+      // podpis obok, przycinany zeby nie wychodzil poza wykres
+      const et = String(n.etykieta ?? "").slice(0, 28);
+      if (et) {
+        ctx.font = "11px Segoe UI";
+        const szer = ctx.measureText(et).width;
+        const wLewo = x + 10 + szer > w - 64;
+        ctx.fillStyle = "rgba(0,0,0,0.65)";
+        ctx.fillRect(wLewo ? x - 12 - szer - 4 : x + 8, y - 24, szer + 6, 14);
+        ctx.fillStyle = "#e3f50a";
+        ctx.fillText(et, wLewo ? x - 12 - szer : x + 11, y - 14);
+      }
+      this._trafieniaNotatek.push({ id: n.id, x, y: y - 14, r: 12 });
+    }
+    ctx.restore();
+  }
+
+  // MOJE WEJSCIE: pozioma linia na cenie zakupu z wynikiem liczonym na biezaco.
+  // Kolor idzie za wynikiem, zeby na pierwszy rzut oka bylo widac, czy jestes na plusie.
+  // Cena biezaca wstrzykiwana jest z aplikacji (setCenaBiezaca), bo primitive nie ma
+  // dostepu do websocketu.
+  _wejscia(ctx, mediaSize) {
+    this._trafieniaWejsc = [];
+    const lista = this.wejscia ?? [];
+    if (!lista.length) return;
+    const w = mediaSize?.width ?? 9999;
+    const teraz = this.cenaBiezaca;
+    ctx.save();
+    ctx.font = "11px Segoe UI";
+    for (const p of lista) {
+      const y = this._s.priceToCoordinate(p.cena);
+      if (y === null) continue;
+      const zysk = Number.isFinite(teraz) && p.cena > 0
+        ? (p.kierunek === "short" ? (p.cena / teraz - 1) : (teraz / p.cena - 1)) * 100
+        : null;
+      const kolor = zysk == null ? "#c9c9c0" : (zysk >= 0 ? "#26a69a" : "#ef5350");
+      ctx.strokeStyle = kolor;
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w - 62, y); ctx.stroke();
+      ctx.setLineDash([]);
+      const kwota = Number(p.kwota_usd);
+      const wynikUsd = zysk != null && Number.isFinite(kwota) ? (kwota * zysk / 100) : null;
+      const et = `WEJŚCIE ${fp(p.cena)}` +
+        (zysk == null ? "" : `  ${zysk >= 0 ? "+" : ""}${zysk.toFixed(2)}%`) +
+        (wynikUsd == null ? "" : `  (${wynikUsd >= 0 ? "+" : ""}${wynikUsd.toFixed(2)} $)`);
+      const szer = ctx.measureText(et).width;
+      ctx.fillStyle = "rgba(0,0,0,0.72)";
+      ctx.fillRect(6, y - 15, szer + 10, 14);
+      ctx.fillStyle = kolor;
+      ctx.fillText(et, 11, y - 5);
+      // pole klikalne: caly podpis, zeby dalo sie edytowac cene i kwote
+      this._trafieniaWejsc.push({ id: p.id, x: 6, y: y - 15, w: szer + 10, h: 14 });
+
+      // CENA SPRZEDAZY jako osobna, zolta linia. Pokazuje, ile procent brakuje
+      // do celu - i ile zarobisz, jesli cel sie wypelni.
+      if (Number.isFinite(p.cel) && p.cel > 0) {
+        const yc = this._s.priceToCoordinate(p.cel);
+        if (yc !== null) {
+          ctx.strokeStyle = "#e3f50a";
+          ctx.lineWidth = 1.4;
+          ctx.setLineDash([6, 4]);
+          ctx.beginPath(); ctx.moveTo(0, yc); ctx.lineTo(w - 62, yc); ctx.stroke();
+          ctx.setLineDash([]);
+          const doCelu = Number.isFinite(teraz) ? (p.cel / teraz - 1) * 100 : null;
+          const zCelu = (p.cel / p.cena - 1) * 100;
+          const zyskUsd = Number.isFinite(kwota) ? kwota * zCelu / 100 : null;
+          const etC = `CEL ${fp(p.cel)}  z wejścia ${zCelu >= 0 ? "+" : ""}${zCelu.toFixed(2)}%` +
+            (zyskUsd == null ? "" : ` (${zyskUsd >= 0 ? "+" : ""}${zyskUsd.toFixed(2)} $)`) +
+            (doCelu == null ? "" : `  ·  brakuje ${doCelu >= 0 ? "+" : ""}${doCelu.toFixed(2)}%`);
+          const szerC = ctx.measureText(etC).width;
+          ctx.fillStyle = "rgba(0,0,0,0.72)";
+          ctx.fillRect(6, yc - 15, szerC + 10, 14);
+          ctx.fillStyle = "#e3f50a";
+          ctx.fillText(etC, 11, yc - 5);
+          // klik w podpis celu tez otwiera edycje tej samej pozycji
+          this._trafieniaWejsc.push({ id: p.id, x: 6, y: yc - 15, w: szerC + 10, h: 14 });
+        }
+      }
     }
     ctx.restore();
   }
@@ -1332,6 +1576,27 @@ class ChmuraChart {
     this._dragging = false;
     this._capturedId = null;
     el.addEventListener("pointerdown", (e) => {
+      // klik w pinezke notatki otwiera jej tresc; sprawdzamy PRZED rysunkami,
+      // bo notatka ma dzialac takze na wykresie, na ktorym nic nie narysowano
+      if (!this.tool.mode && !this.tool.pending) {
+        const r = el.getBoundingClientRect();
+        const mx = e.clientX - r.left, my = e.clientY - r.top;
+        const hit = (this.tool._trafieniaNotatek ?? [])
+          .find((t) => Math.hypot(mx - t.x, my - t.y) <= t.r);
+        if (hit && this.onOtworzNotatke) {
+          this.onOtworzNotatke(hit.id);
+          e.preventDefault();
+          return;
+        }
+        // klik w podpis "WEJSCIE ..." otwiera edycje ceny i kwoty
+        const hw = (this.tool._trafieniaWejsc ?? []).find((t) =>
+          mx >= t.x && mx <= t.x + t.w && my >= t.y && my <= t.y + t.h);
+        if (hw && this.onEdytujWejscie) {
+          this.onEdytujWejscie(hw.id);
+          e.preventDefault();
+          return;
+        }
+      }
       if (!this.tool.mode && !this.tool.pending && this.tool.drawings.length) {
         // najpierw: czy lapiemy UCHWYT zaznaczonego rysunku (zmiana ksztaltu)?
         const u = this._uchwytPod(e);
@@ -1383,6 +1648,28 @@ class ChmuraChart {
         this._setPan(true);
         this.el.style.cursor = "default";
         if (tp && this.onAlarm) this.onAlarm(tp.price);
+        e.preventDefault();
+        return;
+      }
+      if (this.tool.mode === "wejscie") {     // moje wejscie: jeden klik = cena
+        const tp = this._toTimePrice(e);
+        this.tool.mode = null;
+        this._dragging = false;
+        this._releaseCapture();
+        this._setPan(true);
+        this.el.style.cursor = "default";
+        if (tp && this.onWejscie) this.onWejscie(tp.price);
+        e.preventDefault();
+        return;
+      }
+      if (this.tool.mode === "notatka") {    // notatka przypieta: jeden klik = punkt
+        const tp = this._toTimePrice(e);
+        this.tool.mode = null;
+        this._dragging = false;
+        this._releaseCapture();
+        this._setPan(true);
+        this.el.style.cursor = "default";
+        if (tp && this.onNotatka) this.onNotatka(tp.time, tp.price);
         e.preventDefault();
         return;
       }
@@ -1763,6 +2050,38 @@ class ChmuraChart {
   setAlarmy(lista) {
     this.tool.alarmy = (lista || []).map((a) => ({ price: +a.price, id: a.id, kierunek: a.kierunek }));
     this.tool.refresh();
+  }
+
+  // NOTATKI przypiete do punktu: pinezka na (czas swiecy, cena).
+  // Bierzemy tylko te, ktore maja obie wspolrzedne - reszta zostaje w notatniku.
+  setNotatki(lista) {
+    this.tool.notatki = (lista || [])
+      .filter((n) => n.na_wykresie_ts != null && n.na_wykresie_px != null)
+      .map((n) => ({
+        id: n.id,
+        time: Number(n.na_wykresie_ts),
+        price: Number(n.na_wykresie_px),
+        etykieta: n.tytul || String(n.tresc || "").split("\n")[0],
+      }));
+    this.tool.refresh();
+  }
+
+  // MOJE WEJSCIA: linie z cena zakupu i wynikiem na biezaco
+  setWejscia(lista) {
+    this.tool.wejscia = (lista || []).map((p) => ({
+      id: p.id, cena: +p.cena, kwota_usd: p.kwota_usd == null ? null : +p.kwota_usd,
+      ilosc: p.ilosc == null ? null : +p.ilosc, kierunek: p.kierunek || "long",
+      cel: p.cena_wyjscia == null ? null : +p.cena_wyjscia,
+    }));
+    this.tool.refresh();
+  }
+  // cena biezaca wstrzykiwana z websocketu - bez niej nie da sie policzyc wyniku
+  setCenaBiezaca(px) {
+    if (!Number.isFinite(px)) return;
+    const stara = this.tool.cenaBiezaca;
+    this.tool.cenaBiezaca = px;
+    // przerysowujemy tylko gdy sa wejscia i cena faktycznie sie zmienila
+    if ((this.tool.wejscia ?? []).length && stara !== px) this.tool.refresh();
   }
 
   // SCIANY z arkusza: gruba pozioma kreska na poziomie duzego zlecenia
@@ -2195,7 +2514,40 @@ function renderInfoBar() {
     `<span>Norma 30 dni: <b>${fmtUsd(i.base)}</b>${i.vol24 && i.base ? ` <span class="muted">(24h = ${(i.vol24 / i.base).toFixed(1)}× normy)</span>` : ""}</span>` +
     `<span>Kapitalizacja: <b>${i.mcap != null ? fmtUsd(i.mcap) : "—"}</b>` +
     `${i.mcap == null ? '<span class="muted" title="kolektor uzupełnia dane z CoinGecko co 2 godziny"> (jeszcze nie pobrana)</span>' : ""}</span>` +
+    ryzykoPompyHtml(state.ryzyko) +
     `<span class="muted" title="wersja aplikacji - gdy nie zgadza sie po zmianach, odswiez Ctrl+F5">wersja ${window.CHMURA_BUILD ?? "?"}</span>`;
+}
+
+// KARTOTEKA RYZYKA POMPY: ile razy ten coin juz mial fale, jak regularnie i ile
+// oddawal po szczycie. Nie oskarza o manipulacje - mierzy POWTARZALNOSC.
+// "W oknie fali" znaczy, ze od ostatniej fali minelo tyle czasu, co zwykle
+// miedzy falami na tym coinie. To ostrzezenie, nie prognoza.
+const OCENA_KOLOR = { wysokie: "#ef5350", podwyzszone: "#ffa726", zauwazalne: "#c9c9c0", niskie: "#8a8a80" };
+function ryzykoPompyHtml(r) {
+  if (!r || !r.fal) {
+    return `<span class="muted" title="ten coin nie ma w bazie ani jednej pelnej fali od 2021 roku">Fale: <b>brak historii</b></span>`;
+  }
+  const kolor = OCENA_KOLOR[r.ocena] ?? "#c9c9c0";
+  const tip = [
+    `Historia fal tego coina (dane od 2021):`,
+    `- pelnych fal: ${r.fal}`,
+    r.mediana_przerwy_dni != null ? `- typowa przerwa miedzy falami: ${r.mediana_przerwy_dni} dni` : null,
+    r.dni_od_ostatniej != null ? `- od ostatniej fali: ${r.dni_od_ostatniej} dni` : null,
+    r.mediana_wzrostu != null ? `- typowy wzrost w fali: +${r.mediana_wzrostu}%` : null,
+    r.mediana_zniesienia != null ? `- typowe oddanie po szczycie: ${r.mediana_zniesienia}%` : null,
+    ``,
+    r.w_oknie_fali
+      ? `UWAGA: jestes w oknie, w ktorym historycznie przychodzila kolejna fala.`
+      : `Poza typowym oknem kolejnej fali.`,
+    ``,
+    `To pomiar powtarzalnosci, nie oskarzenie o manipulacje.`,
+  ].filter((x) => x !== null).join("\n");
+  return `<span title="${tip.replace(/"/g, "&quot;")}">Fale: ` +
+    `<b style="color:${kolor}">${r.fal}×</b>` +
+    (r.mediana_przerwy_dni != null ? ` <span class="muted">co ~${r.mediana_przerwy_dni} dni</span>` : "") +
+    (r.mediana_zniesienia != null ? ` <span class="muted">· oddaje ${r.mediana_zniesienia}%</span>` : "") +
+    (r.w_oknie_fali ? ` <b style="color:#ffa726">· W OKNIE FALI</b>` : "") +
+    `</span>`;
 }
 
 // tytul karty: "RAD 0.2345 | Chmura" - maks. raz na sekunde
@@ -2211,6 +2563,7 @@ function setDocTitle(px, force = false) {
 let _rowPxTs = 0;
 function setHeaderPrice(px) {
   state.lastPx[state.symbol] = px;
+  chart.setCenaBiezaca(px);        // linia wejscia przelicza zysk przy kazdym ticku
   $("h-px").textContent = fmtPx(px);
   const first = chart.data[Math.max(0, chart.data.length - 2)];
   if (first) {
@@ -2259,18 +2612,29 @@ async function loadSymbol(sym) {
   fetchAlarmy(sym).then((a) => {
     if (state.symbol === sym) chart.setAlarmy(a);
   }).catch(() => { /* brak alarmow */ });
+  fetchNotatkiWykres(sym).then((n) => {
+    if (state.symbol === sym) chart.setNotatki(n);
+  }).catch(() => { /* brak notatek na wykresie */ });
+  odswiezWejscia(sym);
   state.delist = await fetchDelistings(sym);
   chart.setMarkersAll(state.signals, state.delist);
   feed.watch(sym, HTX_PERIOD[state.interval]);
   // pasek info (wolumen / baza / kapitalizacja) - nie blokuje wykresu
   renderOrders();
   state.info = null;
+  state.ryzyko = null;
   $("info-bar").innerHTML = `<span class="muted">ładowanie danych coina…</span>`;
   fetchCoinInfo(sym).then((info) => {
     if (state.symbol !== sym) return;
     state.info = info;
     renderInfoBar();
   });
+  // kartoteka ryzyka pompy - osobno, zeby nie opozniala paska info
+  fetchRyzykoPompy(sym).then((r) => {
+    if (state.symbol !== sym) return;
+    state.ryzyko = r;
+    renderInfoBar();
+  }).catch(() => { /* brak historii fal - pasek pokaze "brak historii" */ });
 }
 
 function renderList() {
@@ -2287,19 +2651,50 @@ function renderList() {
   if (volsReady && !showAll)
     items = items.filter((s) => state.fav.has(s.symbol) || state.poz.has(s.symbol)
                             || volOf(s.symbol) >= PROG_WOLUMENU);
+  const zmOf = (sym) => state.vols.get(sym)?.zmiana;
+  const zkOf = (sym) => state.vols.get(sym)?.zakres;
+  // brak danych ma zawsze ladowac na koncu, niezaleznie od kierunku sortowania
+  const naKoniec = (v, rosnaco) => v == null ? (rosnaco ? Infinity : -Infinity) : v;
   if (state.sort === "alpha") items.sort((a, b) => a.symbol.localeCompare(b.symbol));
+  else if (volsReady && state.sort === "zmiana-desc")
+    items.sort((a, b) => naKoniec(zmOf(b.symbol), false) - naKoniec(zmOf(a.symbol), false));
+  else if (volsReady && state.sort === "zmiana-asc")
+    items.sort((a, b) => naKoniec(zmOf(a.symbol), true) - naKoniec(zmOf(b.symbol), true));
+  else if (volsReady && state.sort === "zakres-desc")
+    items.sort((a, b) => naKoniec(zkOf(b.symbol), false) - naKoniec(zkOf(a.symbol), false));
   else if (volsReady) items.sort((a, b) => state.sort === "vol-asc"
     ? volOf(a.symbol) - volOf(b.symbol) : volOf(b.symbol) - volOf(a.symbol));
-  items = items.slice(0, 400);
+  // Limit listy. Par jest ~600, wiec sztywne 400 przy wlaczonym "pokaz wszystkie"
+  // ucinalo najmniejsze coiny - a to wlasnie ich sie wtedy szuka. Sortowanie idzie
+  // malejaco po obrocie, wiec obcinane byly zawsze te najciensze.
+  items = items.slice(0, showAll ? 800 : 400);
   $("symbol-list").innerHTML = items.map((s) => {
     const v = state.vols.get(s.symbol);
     const px = state.lastPx[s.symbol] ?? v?.close;
+    // zmiana doby (kierunek, na zielono/czerwono) + zakres doby (zmiennosc, szaro).
+    // To dwie rozne informacje: zmiana 0% przy zakresie 50% znaczy "miotalo sie i wrocilo".
+    const zm = v?.zmiana;
+    const zmHtml = zm == null ? "" :
+      `<span class="zm ${zm >= 0 ? "up" : "dn"}">${zm >= 0 ? "+" : ""}${zm.toFixed(2)}%</span>`;
+    // Zakres doby i spread siedza w podpowiedzi, nie w wierszu - uzytkownik woli
+    // widok jak na TradingView, czyli sama zmiana. Sortowanie po zmiennosci zostaje.
+    const zk = v?.zakres;
+    const tip = [
+      `${s.symbol.toUpperCase().replace(/USDT$/, "")}`,
+      zm == null ? null : `zmiana doby: ${zm >= 0 ? "+" : ""}${zm.toFixed(2)}%`,
+      zk == null ? null : `zakres doby (zmienność): ${zk.toFixed(1)}%`,
+      v?.spread == null ? null
+        : `spread: ${v.spread.toFixed(2)}% (koszt obrotu z prowizją: ${(v.spread + 0.4).toFixed(2)}%)`,
+      v?.ats == null ? null : `średnia transakcja: ${fmtUsd(v.ats)}`,
+      `obrót 24h: ${fmtVolPl(v?.vol)}`,
+      "Ctrl+klik lub środkowy przycisk = nowa karta",
+    ].filter(Boolean).join("\n");
     return `
     <a class="sym-row ${s.symbol === state.symbol ? "active" : ""}" data-sym="${s.symbol}"
-       href="?coin=${s.symbol}" title="Ctrl+klik lub środkowy przycisk = nowa karta">
+       href="?coin=${s.symbol}" title="${tip.replace(/"/g, "&quot;")}">
       <span>${s.symbol.toUpperCase().replace(/USDT$/, "")}</span>
       <span class="sym-meta">${state.poz.has(s.symbol)
-        ? `<b style="color:var(--akcent-tekst)">${fmtVolPl(state.poz.get(s.symbol).usd)}</b> · ` : ""}<span data-px="${s.symbol}">${px != null && Number.isFinite(px) ? fmtPx(px) : "—"}</span> · ${fmtVolPl(v?.vol)}</span>
+        ? `<b style="color:var(--akcent-tekst)">${fmtVolPl(state.poz.get(s.symbol).usd)}</b> · ` : ""}<span data-px="${s.symbol}">${px != null && Number.isFinite(px) ? fmtPx(px) : "—"}</span> ${zmHtml} · ${fmtVolPl(v?.vol)}</span>
       <span class="star ${state.fav.has(s.symbol) ? "fav" : ""}" data-star="${s.symbol}">★</span>
     </a>`;
   }).join("");
@@ -2336,7 +2731,16 @@ $("search").addEventListener("input", renderList);
 $("only-fav").addEventListener("change", renderList);
 $("only-poz").addEventListener("change", renderList);
 
-// OTWARTE POZYCJE: stan konta z HTX, zapisywany przez kolektor co 5 minut
+// OTWARTE POZYCJE: stan konta z HTX. Cron odswieza co minute, a przycisk obok
+// checkboxa wymusza odczyt od razu - swiezo kupiona pozycja ma byc widoczna zaraz
+// po zakupie, a nie po minucie.
+async function odswiezPozycjeTeraz(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  await odswiezPortfelTeraz();
+  await loadPortfel();
+  if (btn) { btn.disabled = false; btn.textContent = "↻"; }
+}
+
 async function loadPortfel() {
   const lista = await fetchPortfel();
   state.poz = new Map(lista.filter((p) => p.symbol).map((p) => [p.symbol, p]));
@@ -2350,12 +2754,22 @@ async function loadPortfel() {
       ? "to, co faktycznie masz na koncie HTX"
       : "pusto - dopiero po wgraniu klucza HTX z prawem odczytu";
   }
+  const btn = $("poz-odswiez");
+  if (btn && !btn.dataset.gotowy) {
+    btn.dataset.gotowy = "1";
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      odswiezPozycjeTeraz(btn);
+    });
+  }
   renderList();
 }
 $("show-all").addEventListener("change", renderList);
-const SORT_LABEL = { "vol-desc": "Wolumen ↓", "vol-asc": "Wolumen ↑", "alpha": "A–Z" };
+const SORT_LABEL = { "vol-desc": "Wolumen ↓", "vol-asc": "Wolumen ↑",
+                     "zmiana-desc": "Zmiana ↓", "zmiana-asc": "Zmiana ↑",
+                     "zakres-desc": "Zmienność ↓", "alpha": "A–Z" };
 $("btn-sort").addEventListener("click", () => {
-  const order = ["vol-desc", "vol-asc", "alpha"];
+  const order = ["vol-desc", "vol-asc", "zmiana-desc", "zmiana-asc", "zakres-desc", "alpha"];
   state.sort = order[(order.indexOf(state.sort) + 1) % order.length];
   $("btn-sort").textContent = SORT_LABEL[state.sort];
   renderList();
@@ -2482,7 +2896,8 @@ function openModal(title, html) {
   $("modal").style.display = "block";
   if (typeof podepnijListy === "function") podepnijListy($("modal-body"));
 }
-$("modal-close").addEventListener("click", () => $("modal").style.display = "none");
+function closeModal() { $("modal").style.display = "none"; }
+$("modal-close").addEventListener("click", closeModal);
 $("modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("modal").style.display = "none"; });
 $("modal-body").addEventListener("click", (e) => {
   const sym = e.target.closest("[data-goto]")?.dataset.goto;
@@ -2718,6 +3133,123 @@ async function pokazObserwacje(lista = "wzrost") {
 }
 $("btn-obserwacje").addEventListener("click", () => pokazObserwacje());
 
+
+// --- MOJE WEJSCIE: linia z cena zakupu i wynikiem liczonym na zywo ---
+// Klik narzedziem na wykresie ustawia cene, ale kazda wartosc da sie poprawic recznie,
+// bo klikniecie rzadko trafia dokladnie w cene z gieldy.
+async function odswiezWejscia(sym = state.symbol) {
+  const w = await fetchWejscia(sym).catch(() => []);
+  if (state.symbol === sym) {
+    chart.setWejscia(w);
+    chart.setCenaBiezaca(state.lastPx[sym]);
+  }
+}
+
+function formularzWejscia(dane, tytul, naZapis) {
+  openModal(tytul,
+    `<div class="calc" style="line-height:1.7">
+       <label>Cena wejścia</label>
+       <input id="w-cena" value="${dane.cena ?? ""}" inputmode="decimal">
+       <label>Cena sprzedaży (opcjonalnie) — pokaże się drugą linią jako cel</label>
+       <input id="w-cel" value="${dane.cena_wyjscia ?? ""}" inputmode="decimal" placeholder="np. 0.0045">
+       <label>Kwota w USD (opcjonalnie, do wyliczenia zysku w dolarach)</label>
+       <input id="w-kwota" value="${dane.kwota_usd ?? ""}" inputmode="decimal" placeholder="np. 300">
+       <label>Ilość monet (opcjonalnie)</label>
+       <input id="w-ilosc" value="${dane.ilosc ?? ""}" inputmode="decimal">
+       <label>Notatka (opcjonalnie)</label>
+       <input id="w-notatka" value="${dane.notatka ?? ""}" placeholder="dlaczego wszedłeś">
+       <div style="display:flex;gap:6px;margin-top:10px">
+         <button class="glowny" id="w-zapisz">Zapisz</button>
+         ${dane.id ? `<button class="tool-btn" id="w-usun" style="border:1px solid var(--border)">usuń wejście</button>` : ""}
+       </div>
+       <p class="muted" style="margin-top:8px">Linia wejścia pokazuje wynik na bieżąco:
+         zielona gdy jesteś na plusie, czerwona gdy na minusie. Cena sprzedaży rysuje się
+         osobną, żółtą linią z odległością do celu. Klik w podpis otwiera tę edycję.</p>
+     </div>`);
+  const q = (id) => document.getElementById(id);
+  q("w-zapisz").addEventListener("click", async () => {
+    const cena = parseFloat(String(q("w-cena").value).replace(",", "."));
+    if (!Number.isFinite(cena) || cena <= 0) { q("w-cena").focus(); return; }
+    const liczba = (id) => {
+      const v = parseFloat(String(q(id).value).replace(",", "."));
+      return Number.isFinite(v) && v > 0 ? v : null;
+    };
+    await naZapis({
+      cena, kwota_usd: liczba("w-kwota"), ilosc: liczba("w-ilosc"),
+      cena_wyjscia: liczba("w-cel"),
+      notatka: q("w-notatka").value.trim() || null,
+    });
+    closeModal();
+    await odswiezWejscia();
+  });
+  if (dane.id) {
+    q("w-usun").addEventListener("click", async () => {
+      await usunWejscie(dane.id);
+      closeModal();
+      await odswiezWejscia();
+    });
+  }
+}
+
+chart.onWejscie = (cena) => {
+  const nazwa = state.symbol.toUpperCase().replace(/USDT$/, "");
+  formularzWejscia({ cena: fmtPx(cena) }, `Moje wejście — ${nazwa}`,
+    (d) => dodajWejscie({ symbol: state.symbol, kierunek: "long", ...d }));
+};
+
+chart.onEdytujWejscie = async (id) => {
+  const lista = await fetchWejscia(state.symbol).catch(() => []);
+  const w = lista.find((x) => String(x.id) === String(id));
+  if (!w) return;
+  const nazwa = state.symbol.toUpperCase().replace(/USDT$/, "");
+  formularzWejscia(w, `Edytuj wejście — ${nazwa}`, (d) => zmienWejscie(id, d));
+};
+
+// --- NOTATKI NA WYKRESIE: pinezka w wybranym punkcie (czas swiecy + cena) ---
+// Kotwica trzymana jest w module, bo modal notatnika jest przebudowywany przy
+// kazdym odswiezeniu i nie moze pamietac punktu sam z siebie.
+let kotwicaNotatki = null;
+
+async function odswiezNotatkiWykres() {
+  const n = await fetchNotatkiWykres(state.symbol).catch(() => []);
+  chart.setNotatki(n);
+}
+
+// klik narzedziem 📌 na wykresie: zapamietaj punkt i otworz notatnik
+chart.onNotatka = (time, price) => {
+  kotwicaNotatki = { ts: Math.round(time), px: price };
+  pokazNotatnik(true);
+};
+
+// klik w istniejaca pinezke: pokaz tresc notatki
+chart.onOtworzNotatke = async (id) => {
+  const wszystkie = await fetchNotatkiWykres(state.symbol).catch(() => []);
+  const n = wszystkie.find((x) => String(x.id) === String(id));
+  if (!n) return;
+  openModal(n.tytul || "Notatka",
+    `<div style="line-height:1.6">
+       <div class="muted" style="margin-bottom:6px">
+         przypięta do ${plDate(new Date(Number(n.na_wykresie_ts) * 1000).toISOString(), false)}
+         · cena ${n.na_wykresie_px}
+       </div>
+       <div style="white-space:pre-wrap">${String(n.tresc).replace(/</g, "&lt;")}</div>
+       <div style="margin-top:12px;display:flex;gap:6px">
+         <button class="tool-btn" id="n-odepnij" style="border:1px solid var(--border)">odepnij od wykresu</button>
+         <button class="tool-btn" id="n-usun-tu" style="border:1px solid var(--border)">usuń notatkę</button>
+       </div>
+     </div>`);
+  document.getElementById("n-odepnij").addEventListener("click", async () => {
+    await odepnijNotatke(n.id);
+    await odswiezNotatkiWykres();
+    closeModal();
+  });
+  document.getElementById("n-usun-tu").addEventListener("click", async () => {
+    await usunNotatke(n.id);
+    await odswiezNotatkiWykres();
+    closeModal();
+  });
+};
+
 // --- NOTATNIK: notatki ogolne i per coin, z opcjonalnym przypomnieniem ---
 async function pokazNotatnik(tylkoTenCoin = false) {
   openModal("Notatnik", `<div class="muted">ładowanie…</div>`);
@@ -2727,7 +3259,9 @@ async function pokazNotatnik(tylkoTenCoin = false) {
     <tr style="border-bottom:1px solid var(--border)">
       <td style="padding:5px 8px;white-space:nowrap" class="muted">${plDate(n.ts, false)}</td>
       <td style="padding:5px 8px">${n.symbol ? `<b style="cursor:pointer" data-goto="${n.symbol}">${n.symbol.toUpperCase().replace(/USDT$/, "")}</b>` : "<span class='muted'>ogólna</span>"}</td>
-      <td style="padding:5px 8px">${n.tytul ? `<b>${n.tytul}</b><br>` : ""}${String(n.tresc).replace(/</g, "&lt;")}</td>
+      <td style="padding:5px 8px">${n.na_wykresie_ts
+        ? `<span title="przypięta do wykresu: ${plDate(new Date(Number(n.na_wykresie_ts) * 1000).toISOString(), false)} · ${fmtPx(n.na_wykresie_px)}">📌 </span>`
+        : ""}${n.tytul ? `<b>${n.tytul}</b><br>` : ""}${String(n.tresc).replace(/</g, "&lt;")}</td>
       <td style="padding:5px 8px;white-space:nowrap" class="muted">${n.przypomnienie
         ? (n.wyslane ? "✓ wysłane" : "🔔 " + plDate(n.przypomnienie, false) + " " + String(n.przypomnienie).slice(11, 16)) : ""}</td>
       <td style="padding:5px 8px"><button class="tool-btn" data-usun-notatke="${n.id}"
@@ -2745,6 +3279,17 @@ async function pokazNotatnik(tylkoTenCoin = false) {
          style="width:100%;margin-top:4px;padding:5px 7px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text)"></textarea>
        <label style="display:flex;gap:6px;align-items:center;margin-top:6px">
          <input type="checkbox" id="n-ogolna"> notatka ogólna (nie przypisana do coina)</label>
+       ${kotwicaNotatki
+         ? `<div style="margin-top:6px;padding:5px 7px;border:1px solid var(--akcent);border-radius:4px">
+              📌 <b>przypięta do wykresu</b>:
+              ${plDate(new Date(kotwicaNotatki.ts * 1000).toISOString(), false)}
+              · cena ${fmtPx(kotwicaNotatki.px)}
+              <button class="tool-btn" id="n-bez-kotwicy"
+                style="border:1px solid var(--border);margin-left:8px">zapisz bez pinezki</button>
+            </div>`
+         : `<div class="muted" style="margin-top:6px">
+              Chcesz przypiąć notatkę do konkretnej świecy? Zamknij okno, wybierz 📌 z paska
+              narzędzi i kliknij punkt na wykresie.</div>`}
        <label>Przypomnienie na Telegramie (opcjonalnie)</label>
        <input id="n-kiedy" type="datetime-local">
        <button class="glowny" id="n-zapisz">Zapisz notatkę</button>
@@ -2753,15 +3298,25 @@ async function pokazNotatnik(tylkoTenCoin = false) {
        `<tr><td class="muted" style="padding:8px">Brak notatek.</td></tr>`}</table>`);
   const q = (id) => document.getElementById(id);
   q("n-filtr").addEventListener("click", () => pokazNotatnik(!tylkoTenCoin));
+  q("n-bez-kotwicy") && q("n-bez-kotwicy").addEventListener("click", () => {
+    kotwicaNotatki = null;
+    pokazNotatnik(tylkoTenCoin);
+  });
   q("n-zapisz").addEventListener("click", async () => {
     const tresc = q("n-tresc").value.trim();
     if (!tresc) { q("n-tresc").focus(); return; }
+    const ogolna = q("n-ogolna").checked;
     await dodajNotatke({
-      symbol: q("n-ogolna").checked ? null : state.symbol,
+      symbol: ogolna ? null : state.symbol,
       tytul: q("n-tytul").value.trim() || null,
       tresc,
       przypomnienie: q("n-kiedy").value ? new Date(q("n-kiedy").value).toISOString() : null,
+      // pinezka ma sens tylko dla notatki przypisanej do coina
+      na_wykresie_ts: (!ogolna && kotwicaNotatki) ? kotwicaNotatki.ts : null,
+      na_wykresie_px: (!ogolna && kotwicaNotatki) ? kotwicaNotatki.px : null,
     });
+    kotwicaNotatki = null;
+    await odswiezNotatkiWykres();
     pokazNotatnik(tylkoTenCoin);
   });
   document.querySelectorAll("#modal-body [data-usun-notatke]").forEach((b) =>
@@ -2924,8 +3479,9 @@ $("btn-info").addEventListener("click", async () => {
       ${d.mcap ? `<div><span class="muted">Kapitalizacja:</span> <b>${Math.round(d.mcap).toLocaleString("pl-PL")} $</b></div>` : ""}
       ${d.categories.length ? `<div><span class="muted">Kategorie:</span> ${d.categories.join(", ")}</div>` : ""}
       ${d.home ? `<div><span class="muted">Strona:</span> <a href="${d.home}" target="_blank" style="color:var(--akcent-tekst)">${d.home}</a></div>` : ""}
-      <p style="margin-top:10px;white-space:pre-wrap">${d.desc ? d.desc.slice(0, 2000) : "Brak opisu."}</p>
-      ${d.desc && !d.isPl ? `<p class="muted">(opis po angielsku — CoinGecko nie ma polskiej wersji dla tego coina)</p>` : ""}
+      <p style="margin-top:10px;white-space:pre-wrap">${d.desc ? d.desc.slice(0, 4000) : "Brak opisu."}</p>
+      ${d.desc && d.tlumaczone ? `<p class="muted">(przetłumaczone automatycznie z angielskiego)</p>` : ""}
+      ${d.desc && !d.isPl ? `<p class="muted">(opis po angielsku — tłumaczenie robi się w tle, zajrzyj tu za chwilę)</p>` : ""}
     </div>`);
 });
 
