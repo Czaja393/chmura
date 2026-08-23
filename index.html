@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="22.08-1306";</script></head>
+<script>window.CHMURA_BUILD="23.08-0954";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -685,6 +685,15 @@ async function fetchNotatki(symbol = null) {
   return rest(`notatki?select=id,symbol,tytul,tresc,ts,przypomnienie,wyslane,na_wykresie_ts,na_wykresie_px` +
               (symbol ? `&symbol=eq.${symbol}` : "") + `&order=ts.desc&limit=300`);
 }
+// LUKI CENOWE niedomkniete: poziom, do ktorego cena historycznie wraca.
+// Przewaga siedzi w duzych lukach (5%+), male domykaja sie tak samo czesto jak
+// kazdy inny ruch tej wielkosci - dlatego pokazujemy wielkosc przy kazdej linii.
+async function fetchLuki(symbol) {
+  return rest(`luki?symbol=eq.${symbol}&wypelniona=is.false` +
+              `&select=id,interval,ts,poziom,otwarcie,luka_pct,kierunek` +
+              `&order=ts.desc&limit=40`);
+}
+
 // ZLECENIA CZEKAJACE w arkuszu HTX (lustro /v1/order/openOrders, odswiezane razem
 // z portfelem). To takze zlecenia zlozone recznie w aplikacji gieldy.
 async function fetchZlecenia(symbol = null) {
@@ -1823,6 +1832,26 @@ class ChmuraChart {
         (zysk == null ? "" : ` · cel ${zysk >= 0 ? "+" : ""}${zysk.toFixed(1)}%`);
       dodaj(z.cena, kupno ? "#26a69a" : "#ef5350", opis, 1);
     }
+    // Luki niedomkniete: poziom, do ktorego cena historycznie wraca.
+    // Ta sama luka bywa wykryta na kilku interwalach - scalamy w jedna linie,
+    // bo dwie kreski na tej samej cenie tylko zasmiecaja wykres.
+    const scalone = [];
+    for (const l of (this.tool.luki ?? [])) {
+      const juz = scalone.find((x) => Math.abs(x.poziom / l.poziom - 1) < 0.005);
+      const iv = l.interval === "1day" ? "D" : l.interval === "4hour" ? "4H" : l.interval;
+      if (juz) {
+        if (!juz.iv.includes(iv)) juz.iv.push(iv);
+        // zostawiamy wieksza luke, bo to ona niesie przewage
+        if (Math.abs(l.luka) > Math.abs(juz.luka)) juz.luka = l.luka;
+      } else {
+        scalone.push({ poziom: l.poziom, luka: l.luka, iv: [iv] });
+      }
+    }
+    for (const l of scalone) {
+      const duza = Math.abs(l.luka) >= 5;
+      dodaj(l.poziom, duza ? "#ab47bc" : "#6a5570",
+            `luka ${l.iv.join("+")} ${l.luka >= 0 ? "+" : ""}${l.luka.toFixed(1)}%`, 1);
+    }
     // wejscia i cele
     for (const p of (this.tool.wejscia ?? [])) {
       const zysk = Number.isFinite(teraz) && p.cena > 0 ? (teraz / p.cena - 1) * 100 : null;
@@ -2196,6 +2225,17 @@ class ChmuraChart {
     }
     // przerysowujemy tylko gdy sa wejscia i cena faktycznie sie zmienila
     if ((this.tool.wejscia ?? []).length && stara !== px) this.tool.refresh();
+  }
+
+  // LUKI niedomkniete: poziom domkniecia jako linia. Grubosc linii idzie za
+  // wielkoscia luki, bo tylko duze maja zmierzona przewage.
+  setLuki(lista) {
+    this.tool.luki = (lista || []).map((l) => ({
+      id: l.id, poziom: +l.poziom, luka: +l.luka_pct,
+      interval: l.interval, kierunek: l.kierunek,
+    }));
+    this._odswiezLinie();
+    this.tool.refresh();
   }
 
   // ZLECENIA CZEKAJACE: Twoje limity stojace w arkuszu HTX
@@ -3317,11 +3357,13 @@ $("btn-obserwacje").addEventListener("click", () => pokazObserwacje());
 // Klik narzedziem na wykresie ustawia cene, ale kazda wartosc da sie poprawic recznie,
 // bo klikniecie rzadko trafia dokladnie w cene z gieldy.
 async function odswiezWejscia(sym = state.symbol) {
-  const [w, z] = await Promise.all([
+  const [w, z, lk] = await Promise.all([
     fetchWejscia(sym).catch(() => []),
     fetchZlecenia(sym).catch(() => []),
+    fetchLuki(sym).catch(() => []),
   ]);
   if (state.symbol === sym) {
+    chart.setLuki(lk);             // niedomkniete luki cenowe
     chart.setWejscia(w);
     chart.setZlecenia(z);          // Twoje limity czekajace w arkuszu
     chart.setCenaBiezaca(state.lastPx[sym]);
