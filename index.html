@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="23.08-1731";</script></head>
+<script>window.CHMURA_BUILD="23.08-1904";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -693,6 +693,20 @@ async function fetchLuki(symbol) {
   return rest(`luki?symbol=eq.${symbol}&wypelniona=is.false` +
               `&select=id,interval,ts,poziom,otwarcie,luka_pct,kierunek` +
               `&order=ts.desc&limit=40`);
+}
+
+// ZGLOSZENIE BLEDU APLIKACJI. Uzytkownik zglosil, ze na XFI "wywala cala apke",
+// a ja nie umialem tego odtworzyc ani na desktopie, ani na telefonie, ani przez panel luk.
+// Zamiast zgadywac: kazdy nieobsluzony blad zapisuje sie z coinem, interwalem i stosem,
+// wiec nastepnym razem bedzie wiadomo dokladnie co i gdzie padlo.
+async function zglosBlad(dane) {
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/bledy_app`, {
+      method: "POST",
+      headers: { ...H, "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify(dane),
+    });
+  } catch (_e) { /* zgloszenie bledu nie moze samo wywolac bledu */ }
 }
 
 // LUKI: wszystkie otwarte, nie tylko dla biezacego coina (do listy w menu)
@@ -3865,6 +3879,49 @@ window.__chart = chart;
   setInterval(loadVolumes, 5 * 60 * 1000);    // odswiezanie co 5 minut
   await loadSymbol(state.symbol);
 })();
+
+// --- PULAPKA NA BLEDY ---
+// Aplikacja nie moze po prostu gasnac. Kazdy nieobsluzony blad:
+// 1. zapisuje sie do bazy razem z coinem i interwalem, na ktorych wystapil,
+// 2. pokazuje uzytkownikowi pasek zamiast pustego ekranu.
+// Powod: zgloszenie "na XFI wywala cala apke", ktorego nie dalo sie odtworzyc.
+let ostatniBlad = 0;
+function obsluzBlad(zrodlo, komunikat, stos) {
+  try {
+    const teraz = Date.now();
+    if (teraz - ostatniBlad < 3000) return;     // nie zalewamy bazy seria tych samych
+    ostatniBlad = teraz;
+    zglosBlad({
+      komunikat: `${zrodlo}: ${String(komunikat).slice(0, 500)}`,
+      stos: String(stos || "").slice(0, 2000),
+      coin: state?.symbol ?? null,
+      interwal: state?.interval ?? null,
+      url: location.href.slice(0, 300),
+      ekran: `${window.innerWidth}x${window.innerHeight}`,
+      agent: navigator.userAgent.slice(0, 200),
+      wersja: String(window.CHMURA_BUILD ?? "?"),
+    });
+    let pasek = document.getElementById("pasek-bledu");
+    if (!pasek) {
+      pasek = document.createElement("div");
+      pasek.id = "pasek-bledu";
+      pasek.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:200;" +
+        "background:#4a1414;color:#ffd7d7;padding:8px 12px;font-size:12px;" +
+        "display:flex;gap:10px;align-items:center";
+      document.body.appendChild(pasek);
+    }
+    pasek.innerHTML = `<span>Coś się zepsuło na <b>${state?.symbol ?? "?"}</b> ` +
+      `(${state?.interval ?? "?"}). Zgłoszenie zapisane. Odśwież stronę, jeśli aplikacja nie reaguje.</span>` +
+      `<button class="tool-btn" style="border:1px solid #a55;margin-left:auto" ` +
+      `onclick="location.reload()">Odśwież</button>` +
+      `<button class="tool-btn" style="border:1px solid #a55" ` +
+      `onclick="document.getElementById('pasek-bledu').remove()">Ukryj</button>`;
+  } catch (_e) { /* pulapka nie moze sama wybuchnac */ }
+}
+window.addEventListener("error", (e) => obsluzBlad("blad", e.message, e.error && e.error.stack));
+window.addEventListener("unhandledrejection", (e) =>
+  obsluzBlad("obietnica", e.reason && e.reason.message ? e.reason.message : e.reason,
+             e.reason && e.reason.stack));
 
 </script>
 <script>if (location.protocol === "https:" && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").then((r) => r.update());</script>
