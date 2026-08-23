@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="23.08-0954";</script></head>
+<script>window.CHMURA_BUILD="23.08-1731";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -261,6 +261,7 @@
         <button class="menu-poz" id="btn-formacje">Formacje i ścisk</button>
         <button class="menu-poz" id="btn-lista-ichimoku">Chmura Ichimoku</button>
         <button class="menu-poz" id="btn-sciany">Ściany w arkuszu</button>
+        <button class="menu-poz" id="btn-luki">Luki cenowe</button>
         <div class="menu-tyt">Moje</div>
         <button class="menu-poz" id="btn-obserwacje">Obserwacje</button>
         <button class="menu-poz" id="btn-alarmy">Alarmy cenowe</button>
@@ -692,6 +693,18 @@ async function fetchLuki(symbol) {
   return rest(`luki?symbol=eq.${symbol}&wypelniona=is.false` +
               `&select=id,interval,ts,poziom,otwarcie,luka_pct,kierunek` +
               `&order=ts.desc&limit=40`);
+}
+
+// LUKI: wszystkie otwarte, nie tylko dla biezacego coina (do listy w menu)
+async function fetchLukiWszystkie(tylkoDuze = false) {
+  return rest(`luki?wypelniona=is.false` +
+              (tylkoDuze ? `&or=(luka_pct.gte.5,luka_pct.lte.-5)` : "") +
+              `&select=id,symbol,interval,ts,poziom,otwarcie,luka_pct,kierunek,baza_vol` +
+              `&order=ts.desc&limit=300`);
+}
+// statystyka domykania liczona na wlasnych danych (widok luki_statystyka)
+async function fetchLukiStatystyka() {
+  return rest(`luki_statystyka?select=*`);
 }
 
 // ZLECENIA CZEKAJACE w arkuszu HTX (lustro /v1/order/openOrders, odswiezane razem
@@ -3429,6 +3442,88 @@ chart.onEdytujWejscie = async (id) => {
   const nazwa = state.symbol.toUpperCase().replace(/USDT$/, "");
   formularzWejscia(w, `Edytuj wejście — ${nazwa}`, (d) => zmienWejscie(id, d));
 };
+
+
+// --- LUKI CENOWE: lista otwartych + statystyka domykania na wlasnych danych ---
+// Luki ponizej 5% NIE ida na Telegram (bo tam przewagi nie ma), ale sa tutaj i na wykresie.
+// Przewaga zmierzona na 15 465 lukach: 5-10% daje +10,2 pkt nad tlem, 10%+ daje +14,1,
+// a 1-3% okolo +3, czyli w granicach szumu.
+let lukiTylkoDuze = false;
+async function pokazLuki() {
+  openModal("Luki cenowe", `<div class="muted">ładowanie…</div>`);
+  const [lista, stat] = await Promise.all([
+    fetchLukiWszystkie(lukiTylkoDuze).catch(() => []),
+    fetchLukiStatystyka().catch(() => []),
+  ]);
+  const kolej = { "1-2%": 1, "2-3%": 2, "3-5%": 3, "5-10%": 4, "10%+": 5 };
+  const st = stat.slice().sort((x, y) => (kolej[x.kubelek] ?? 9) - (kolej[y.kubelek] ?? 9));
+  const wierszeStat = st.map((r) => {
+    const duzy = r.kubelek === "5-10%" || r.kubelek === "10%+";
+    return `<tr style="border-bottom:1px solid var(--border)${duzy ? ";font-weight:600" : ""}">
+      <td style="padding:3px 8px">${r.interval === "1day" ? "dzienne" : "4-godzinne"}</td>
+      <td style="padding:3px 8px">${r.kubelek}</td>
+      <td style="padding:3px 8px">${r.kierunek === "gora" ? "w górę" : "w dół"}</td>
+      <td style="padding:3px 8px;text-align:right">${r.ile}</td>
+      <td style="padding:3px 8px;text-align:right">${r.pct_domknietych ?? "—"}%</td>
+      <td style="padding:3px 8px;text-align:right" class="muted">${r.mediana_godzin ?? "—"} h</td>
+    </tr>`;
+  }).join("");
+
+  const wiersze = lista.map((l) => {
+    const p = +l.luka_pct;
+    const duza = Math.abs(p) >= 5;
+    const nm = l.symbol.toUpperCase().replace(/USDT$/, "");
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:4px 8px"><b style="cursor:pointer" data-goto="${l.symbol}">${nm}</b></td>
+      <td style="padding:4px 8px" class="muted">${l.interval === "1day" ? "D" : "4H"}</td>
+      <td style="padding:4px 8px;text-align:right;color:${p >= 0 ? "#26a69a" : "#ef5350"};
+          ${duza ? "font-weight:700" : ""}">${p >= 0 ? "+" : ""}${p.toFixed(1)}%</td>
+      <td style="padding:4px 8px;text-align:right">${fmtPx(+l.poziom)}</td>
+      <td style="padding:4px 8px;text-align:right" class="muted">${fmtVolPl(l.baza_vol)}</td>
+      <td style="padding:4px 8px" class="muted">${plDate(l.ts, false)}</td>
+      <td style="padding:4px 8px">${duza ? '<span title="tu siedzi zmierzona przewaga">◆</span>' : ""}</td>
+    </tr>`;
+  }).join("");
+
+  openModal(`Luki cenowe (${lista.length} otwartych)`,
+    `<div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
+       <button class="tool-btn" id="luki-filtr" style="border:1px solid var(--border)">
+         ${lukiTylkoDuze ? "pokaż wszystkie" : "tylko od 5% (z przewagą)"}</button>
+     </div>
+     <p class="muted" style="margin-bottom:8px;line-height:1.5">
+       Luka to otwarcie świecy odbiegające od zamknięcia poprzedniej. Na rynku 24/7 nie jest to
+       luka weekendowa, tylko <b>luka płynności</b>: między świecami nikt nie handlował.<br>
+       <b>Na Telegram idą tylko luki od 5%</b>, bo tylko tam jest zmierzona przewaga.
+       Reszta jest tutaj i na wykresie. Oznaczone ◆ mają przewagę.
+     </p>
+     <table style="width:100%;border-collapse:collapse;font-size:12px">
+       <tr class="muted"><th style="text-align:left;padding:3px 8px">para</th>
+         <th style="text-align:left;padding:3px 8px">iv</th>
+         <th style="text-align:right;padding:3px 8px">luka</th>
+         <th style="text-align:right;padding:3px 8px">domknięcie</th>
+         <th style="text-align:right;padding:3px 8px">obrót</th>
+         <th style="text-align:left;padding:3px 8px">kiedy</th><th></th></tr>
+       ${wiersze || `<tr><td class="muted" style="padding:8px">Brak otwartych luk.</td></tr>`}
+     </table>
+     <h3 style="margin-top:14px;font-size:12px;text-transform:uppercase;color:var(--muted)">
+       Domykanie na Twoich danych</h3>
+     <p class="muted" style="margin-bottom:6px">
+       Do porównania z pomiarem na 15 465 lukach z dwóch lat: w 7 dni domykało się
+       92,1% luk 1-2% (tło 89,1%), a 47,7% luk 10%+ (tło 33,6%).
+       <b>Przewaga siedzi w dużych, nie w małych.</b></p>
+     <table style="width:100%;border-collapse:collapse;font-size:12px">
+       <tr class="muted"><th style="text-align:left;padding:3px 8px">interwał</th>
+         <th style="text-align:left;padding:3px 8px">wielkość</th>
+         <th style="text-align:left;padding:3px 8px">kierunek</th>
+         <th style="text-align:right;padding:3px 8px">ile</th>
+         <th style="text-align:right;padding:3px 8px">domkniętych</th>
+         <th style="text-align:right;padding:3px 8px">mediana</th></tr>
+       ${wierszeStat || `<tr><td class="muted" style="padding:8px">Jeszcze brak danych.</td></tr>`}
+     </table>`);
+  const b = document.getElementById("luki-filtr");
+  if (b) b.addEventListener("click", () => { lukiTylkoDuze = !lukiTylkoDuze; pokazLuki(); });
+}
+$("btn-luki") && $("btn-luki").addEventListener("click", pokazLuki);
 
 // --- NOTATKI NA WYKRESIE: pinezka w wybranym punkcie (czas swiecy + cena) ---
 // Kotwica trzymana jest w module, bo modal notatnika jest przebudowywany przy
