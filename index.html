@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="28.08-2125";</script></head>
+<script>window.CHMURA_BUILD="28.08-2141";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -263,6 +263,7 @@
         <button class="menu-poz" id="btn-sciany">Ściany w arkuszu</button>
         <button class="menu-poz" id="btn-luki">Luki cenowe</button>
         <button class="menu-poz" id="btn-oscylatory">Oscylatory</button>
+        <button class="menu-poz" id="btn-siatki">Siatki papierowe</button>
         <div class="menu-tyt">Moje</div>
         <button class="menu-poz" id="btn-obserwacje">Obserwacje</button>
         <button class="menu-poz" id="btn-alarmy">Alarmy cenowe</button>
@@ -727,6 +728,15 @@ async function fetchLukiStatystyka() {
 async function fetchZlecenia(symbol = null) {
   return rest(`zlecenia_otwarte?select=id,symbol,strona,typ,cena,ilosc,kwota_usd,zlozone` +
               (symbol ? `&symbol=eq.${symbol}` : "") + `&order=cena.desc&limit=200`);
+}
+
+// SIATKI PAPIEROWE: wyniki wariantow (A/B celow) i dziennik decyzji automatu
+async function fetchSiatkiAb() {
+  return rest(`siatki_ab?select=id,symbol,cel_pct,od,obroty_realne,zysk_realny_pct,kupien,wiszace` +
+              `&order=symbol.asc,cel_pct.asc&limit=60`);
+}
+async function fetchSiatkaLog() {
+  return rest(`siatka_log?select=siatka,ts,powod&order=ts.desc&limit=30`);
 }
 
 // OSCYLATORY: coiny falujace w ciagu dnia, ze stanem z klasyfikatora
@@ -3614,6 +3624,35 @@ async function pokazOscylatory() {
      `<tr><td class="muted" style="padding:8px">Skaner jeszcze nie zebrał danych.</td></tr>`}</table>`);
 }
 $("btn-oscylatory") && $("btn-oscylatory").addEventListener("click", pokazOscylatory);
+
+// --- SIATKI PAPIEROWE: wyniki testu A/B + dziennik decyzji automatu ---
+async function pokazSiatki() {
+  openModal("Siatki papierowe", `<div class="muted">ładowanie…</div>`);
+  const [ab, log] = await Promise.all([
+    fetchSiatkiAb().catch(() => []), fetchSiatkaLog().catch(() => []),
+  ]);
+  const wiersze = ab.map((s) => `<tr style="border-bottom:1px solid var(--border)">
+    <td style="padding:3px 8px"><b style="cursor:pointer" data-goto="${s.symbol}">${s.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
+    <td style="padding:3px 8px;text-align:right">${(+s.cel_pct).toFixed(1)}%</td>
+    <td style="padding:3px 8px;text-align:right">${s.obroty_realne}</td>
+    <td style="padding:3px 8px;text-align:right"><b>${(+s.zysk_realny_pct).toFixed(1)}%</b></td>
+    <td style="padding:3px 8px;text-align:right" class="muted">${s.wiszace}</td>
+    <td style="padding:3px 8px" class="muted">${s.od}</td></tr>`).join("");
+  const decyzje = log.map((l) => `<div style="padding:4px 0;border-bottom:1px solid var(--border)">
+    <span class="muted">${plDate(l.ts, false)} ${String(l.ts).slice(11, 16)} · siatka #${l.siatka}</span><br>${String(l.powod).replace(/</g, "&lt;")}</div>`).join("");
+  openModal(`Siatki papierowe (${ab.length})`,
+    `<p class="muted" style="margin-bottom:6px">Symulacja bez ryzyka: nic nie kupuje naprawdę.
+     „Obroty realne" liczą tylko wypełnienia z pokryciem w płynności. Zysk to suma
+     (cel minus prowizja) × obroty, w % kapitału jednego poziomu. Nominałom nie ufać,
+     służą do PORÓWNYWANIA wariantów. Przegląd 5.09.</p>
+     <table style="width:100%;border-collapse:collapse;font-size:12px">
+     <tr class="muted"><td style="padding:3px 8px">para</td><td style="padding:3px 8px;text-align:right">cel</td>
+     <td style="padding:3px 8px;text-align:right">obroty real.</td><td style="padding:3px 8px;text-align:right">zysk real.</td>
+     <td style="padding:3px 8px;text-align:right">wisi</td><td style="padding:3px 8px">od</td></tr>${wiersze}</table>
+     <h3 style="margin:12px 0 4px;font-size:12px;text-transform:uppercase" class="muted">Decyzje automatu (dziennik)</h3>
+     <div style="font-size:12px">${decyzje || '<span class="muted">jeszcze żadnych</span>'}</div>`);
+}
+$("btn-siatki") && $("btn-siatki").addEventListener("click", pokazSiatki);
 
 // --- NOTATKI NA WYKRESIE: pinezka w wybranym punkcie (czas swiecy + cena) ---
 // Kotwica trzymana jest w module, bo modal notatnika jest przebudowywany przy
