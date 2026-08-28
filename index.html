@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="28.08-2111";</script></head>
+<script>window.CHMURA_BUILD="28.08-2116";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -262,6 +262,7 @@
         <button class="menu-poz" id="btn-lista-ichimoku">Chmura Ichimoku</button>
         <button class="menu-poz" id="btn-sciany">Ściany w arkuszu</button>
         <button class="menu-poz" id="btn-luki">Luki cenowe</button>
+        <button class="menu-poz" id="btn-oscylatory">Oscylatory</button>
         <div class="menu-tyt">Moje</div>
         <button class="menu-poz" id="btn-obserwacje">Obserwacje</button>
         <button class="menu-poz" id="btn-alarmy">Alarmy cenowe</button>
@@ -726,6 +727,13 @@ async function fetchLukiStatystyka() {
 async function fetchZlecenia(symbol = null) {
   return rest(`zlecenia_otwarte?select=id,symbol,strona,typ,cena,ilosc,kwota_usd,zlozone` +
               (symbol ? `&symbol=eq.${symbol}` : "") + `&order=cena.desc&limit=200`);
+}
+
+// OSCYLATORY: coiny falujace w ciagu dnia, ze stanem z klasyfikatora
+// (boczniak / kanal wzrostowy / kanal spadkowy / rozpalenie / wygaszony)
+async function fetchOscylatory() {
+  return rest(`oscylatory?select=symbol,s15d,s2d,s3d,zakres_med,netto_med,chop,` +
+              `obrot30,tx24,spread_pct,stan,stan_od,kandydat_do&order=s2d.desc&limit=120`);
 }
 
 // DOMINACJA BTC: ostatni odczyt (kolektor pobiera z CoinGecko co 2h).
@@ -3557,6 +3565,41 @@ async function pokazLuki() {
   if (b) b.addEventListener("click", () => { lukiTylkoDuze = !lukiTylkoDuze; pokazLuki(); });
 }
 $("btn-luki") && $("btn-luki").addEventListener("click", pokazLuki);
+
+// --- OSCYLATORY: panel z listy skanera (stan + swingi + plynnosc) ---
+const STAN_KOLOR = { "rozpalenie": "#ffa726", "boczniak": "#26a69a",
+  "kanal wzrostowy": "#4ec08a", "kanal spadkowy": "#ef5350", "wygaszony": "#8a8a80" };
+async function pokazOscylatory() {
+  openModal("Oscylatory", `<div class="muted">ładowanie…</div>`);
+  const lista = (await fetchOscylatory().catch(() => [])).filter((o) => o.stan !== "wygaszony");
+  const wiersze = lista.map((o) => {
+    const nm = o.symbol.toUpperCase().replace(/USDT$/, "");
+    const kandydat = o.kandydat_do && new Date(o.kandydat_do) > new Date();
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:4px 8px"><b style="cursor:pointer" data-goto="${o.symbol}">${nm}</b></td>
+      <td style="padding:4px 8px"><span style="color:${STAN_KOLOR[o.stan] ?? "var(--muted)"}">${o.stan}</span>${
+        kandydat ? ' <span class="muted" title="świeżo rozpalony: przez 12h obserwujemy, nie gramy">⏳</span>' : ""}</td>
+      <td style="padding:4px 8px;text-align:right"><b>${(+o.s2d).toFixed(0)}</b><span class="muted">/${(+o.s15d).toFixed(0)}</span></td>
+      <td style="padding:4px 8px;text-align:right">${(+o.zakres_med).toFixed(1)}%</td>
+      <td style="padding:4px 8px;text-align:right" class="muted">${fmtVolPl(o.obrot30)}</td>
+      <td style="padding:4px 8px;text-align:right" class="muted">${o.spread_pct == null ? "—" : (+o.spread_pct).toFixed(1) + "%"}</td>
+    </tr>`;
+  }).join("");
+  openModal(`Oscylatory (${lista.length})`,
+    `<p class="muted" style="margin-bottom:6px">Coiny falujące w ciągu dnia. Swingi = ile razy
+     dziennie cena robi ruch ≥2% / ≥1,5% (zygzak na świecach 5-minutowych z 3 dni). Stan
+     z klasyfikatora: boczniak i kanały nadają się pod siatkę, rozpalenie to kandydat
+     (czekamy 12h), spread duży = wypełnienia przychodzą na pchnięciach przeciw Tobie.
+     Skan co godzinę, tylko pary z obrotem ≥100 tys. i ≥8 tys. transakcji na dobę.</p>
+     <table style="width:100%;border-collapse:collapse;font-size:12px">
+     <tr class="muted"><td style="padding:3px 8px">coin</td><td style="padding:3px 8px">stan</td>
+     <td style="padding:3px 8px;text-align:right">sw 2%/1,5%</td>
+     <td style="padding:3px 8px;text-align:right">zakres dnia</td>
+     <td style="padding:3px 8px;text-align:right">obrót 30d</td>
+     <td style="padding:3px 8px;text-align:right">spread</td></tr>${wiersze ||
+     `<tr><td class="muted" style="padding:8px">Skaner jeszcze nie zebrał danych.</td></tr>`}</table>`);
+}
+$("btn-oscylatory") && $("btn-oscylatory").addEventListener("click", pokazOscylatory);
 
 // --- NOTATKI NA WYKRESIE: pinezka w wybranym punkcie (czas swiecy + cena) ---
 // Kotwica trzymana jest w module, bo modal notatnika jest przebudowywany przy
