@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="23.08-1904";</script></head>
+<script>window.CHMURA_BUILD="28.08-2111";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -726,6 +726,15 @@ async function fetchLukiStatystyka() {
 async function fetchZlecenia(symbol = null) {
   return rest(`zlecenia_otwarte?select=id,symbol,strona,typ,cena,ilosc,kwota_usd,zlozone` +
               (symbol ? `&symbol=eq.${symbol}` : "") + `&order=cena.desc&limit=200`);
+}
+
+// DOMINACJA BTC: ostatni odczyt (kolektor pobiera z CoinGecko co 2h).
+// Uzywana przy decyzjach makro: spadek dominacji = kapital plynie w alty.
+async function fetchDominacja() {
+  const r = await rest(`dominacja?select=ts,btc_pct,eth_pct&order=ts.desc&limit=2`);
+  if (!r.length) return null;
+  const zmiana = r.length > 1 && r[1].btc_pct ? +r[0].btc_pct - +r[1].btc_pct : null;
+  return { btc: +r[0].btc_pct, eth: +r[0].eth_pct, zmiana };
 }
 
 // MOJE WEJSCIA: reczne znaczniki pozycji na wykresie (cena zakupu + wynik na zywo)
@@ -2706,7 +2715,17 @@ function renderInfoBar() {
     `<span>Kapitalizacja: <b>${i.mcap != null ? fmtUsd(i.mcap) : "—"}</b>` +
     `${i.mcap == null ? '<span class="muted" title="kolektor uzupełnia dane z CoinGecko co 2 godziny"> (jeszcze nie pobrana)</span>' : ""}</span>` +
     ryzykoPompyHtml(state.ryzyko) +
+    dominacjaHtml(state.dominacja) +
     `<span class="muted" title="wersja aplikacji - gdy nie zgadza sie po zmianach, odswiez Ctrl+F5">wersja ${window.CHMURA_BUILD ?? "?"}</span>`;
+}
+
+// DOMINACJA BTC w pasku: globalna, nie per coin. Strzalka pokazuje kierunek zmiany
+// od poprzedniego odczytu (spadek dominacji = kapital plynie w alty).
+function dominacjaHtml(d) {
+  if (!d) return "";
+  const strz = d.zmiana == null ? "" : (d.zmiana < -0.01 ? " ↓" : d.zmiana > 0.01 ? " ↑" : " →");
+  const kol = d.zmiana == null ? "" : (d.zmiana < -0.01 ? "style=\"color:#26a69a\"" : d.zmiana > 0.01 ? "style=\"color:#ef5350\"" : "");
+  return `<span title="dominacja BTC z CoinGecko, odswiezana co 2h. Spadek = kapital plynie w alty (sprzyja small capom)">Dominacja BTC: <b ${kol}>${d.btc.toFixed(1)}%${strz}</b></span>`;
 }
 
 // KARTOTEKA RYZYKA POMPY: ile razy ten coin juz mial fale, jak regularnie i ile
@@ -3858,6 +3877,10 @@ $("main").addEventListener("click", () => {
 
 // wykres dostepny z konsoli - ulatwia diagnoze, nic nie zmienia w dzialaniu
 window.__chart = chart;
+
+// dominacja: raz na starcie i co 10 minut (kolektor i tak odswieza co 2h)
+fetchDominacja().then((d) => { state.dominacja = d; renderInfoBar(); }).catch(() => {});
+setInterval(() => fetchDominacja().then((d) => { state.dominacja = d; renderInfoBar(); }).catch(() => {}), 600000);
 
 (async function init() {
   // adres decyduje, co pokazac - dzieki temu link z nowej karty otwiera wlasciwy coin
