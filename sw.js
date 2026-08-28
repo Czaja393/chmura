@@ -1,4 +1,4 @@
-const C = "chmura-28.08-2116";
+const C = "chmura-28.08-2125";
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil((async () => {
   for (const k of await caches.keys()) if (k !== C) await caches.delete(k);

@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="28.08-2116";</script></head>
+<script>window.CHMURA_BUILD="28.08-2125";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -2045,10 +2045,24 @@ class ChmuraChart {
     if (this.tool) this.tool.formacje = this._form;
     this._odswiezKanaly();
     if (this._srOn) this.tool.levels = this._liczPoziomy();
+    // Znacznik delistingu ROZROZNIA zakres. Uzytkownik przeoczyl przy POWR, ze
+    // "Delisting" dotyczyl tylko marginu, bo znacznik wygladal identycznie jak przy
+    // zdjeciu ze spotu. Margin/futures to inna waga zdarzenia niz koniec handlu.
     for (const d of delistings || []) {
       const t = snap(Math.floor(Date.parse(d.published_at || d.seen_at) / 1000));
-      if (t !== null) marks.push({ time: t, position: "aboveBar", color: "#ff1744",
-                                   shape: "square", text: `DELIST:${(d.source || "").toUpperCase()}` });
+      if (t === null) continue;
+      const tytul = String(d.title || "").toLowerCase();
+      const zrodlo = (d.source || "").toUpperCase();
+      let etykieta = `DELIST:${zrodlo}`, kolor = "#ff1744";
+      if (/margin|loan|lending|collateral/.test(tytul)) {
+        etykieta = `MARGIN OFF:${zrodlo}`; kolor = "#ffa726";   // lagodniejsze: spot zostaje
+      } else if (/perpetual|futures|contract/.test(tytul)) {
+        etykieta = `FUTURES OFF:${zrodlo}`; kolor = "#ffa726";
+      } else if (/alpha/.test(tytul)) {
+        etykieta = `ALPHA OFF:${zrodlo}`; kolor = "#c9c9c0";
+      }
+      marks.push({ time: t, position: "aboveBar", color: kolor,
+                   shape: "square", text: etykieta });
     }
     marks.sort((a, b) => a.time - b.time);
     this.candles.setMarkers(marks);
