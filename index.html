@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="29.08-0736";</script></head>
+<script>window.CHMURA_BUILD="29.08-0818";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -2049,7 +2049,10 @@ class ChmuraChart {
       if (s.kind !== `dno_${this._iv}`) continue;
       let d = s.detail;
       if (typeof d === "string") { try { d = JSON.parse(d); } catch (_e) { continue; } }
-      if (!d || !d.t1 || !d.t2 || !d.szyja) continue;
+      if (!d || !d.t1 || !d.t2 || !d.szyja || !(+d.p1 > 0)) continue;
+      // filtr rysowania: podwojne dno tylko przy naprawde rownych dolkach (<=2%).
+      // Detektor toleruje 5% i rysowal formacje na sile (uwaga uzytkownika, SOPH 28.08).
+      if (Math.abs(+d.p2 / +d.p1 - 1) > 0.02) continue;
       this._form.push({ t1: d.t1, t2: d.t2, p1: +d.p1, p2: +d.p2, szyja: +d.szyja,
                         typ: d.typ, kierunek: d.kierunek, alert: d.alert });
     }
