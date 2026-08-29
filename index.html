@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="29.08-0818";</script></head>
+<script>window.CHMURA_BUILD="29.08-1235";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -264,6 +264,7 @@
         <button class="menu-poz" id="btn-luki">Luki cenowe</button>
         <button class="menu-poz" id="btn-oscylatory">Oscylatory</button>
         <button class="menu-poz" id="btn-siatki">Siatki papierowe</button>
+        <button class="menu-poz" id="btn-historia">Historia transakcji</button>
         <div class="menu-tyt">Moje</div>
         <button class="menu-poz" id="btn-obserwacje">Obserwacje</button>
         <button class="menu-poz" id="btn-alarmy">Alarmy cenowe</button>
@@ -732,11 +733,26 @@ async function fetchZlecenia(symbol = null) {
 
 // SIATKI PAPIEROWE: wyniki wariantow (A/B celow) i dziennik decyzji automatu
 async function fetchSiatkiAb() {
-  return rest(`siatki_ab?select=id,symbol,cel_pct,od,obroty_realne,zysk_realny_pct,kupien,wiszace` +
+  return rest(`siatki_ab?select=id,symbol,cel_pct,od,obroty_realne,zysk_realny_pct,obroty_pewne,zysk_pewny_pct,kupien,wiszace` +
               `&order=symbol.asc,cel_pct.asc&limit=60`);
 }
 async function fetchSiatkaLog() {
   return rest(`siatka_log?select=siatka,ts,powod&order=ts.desc&limit=30`);
+}
+
+// HISTORIA TRANSAKCJI: wszystkie wypelnienia z HTX (API + wpisy reczne sprzed
+// startu zapisu). API HTX pamieta krotko, ta tabela pamieta na zawsze.
+async function fetchWypelnienia() {
+  // stronicowanie po 1000: PostgREST ucina wieksze zapytania do 1000 wierszy PO CICHU,
+  // a ta tabela ma rosnac bez konca (przekonalismy sie na fetchCandles)
+  const all = [];
+  for (let od = 0; ; od += 1000) {
+    const p = await rest(`wypelnienia?select=id,symbol,strona,typ,cena,ilosc,oplata,waluta_oplaty,rola,ts` +
+                         `&order=ts.asc,id.asc&offset=${od}&limit=1000`);
+    all.push(...p);
+    if (p.length < 1000) break;
+  }
+  return all;
 }
 
 // OSCYLATORY: coiny falujace w ciagu dnia, ze stanem z klasyfikatora
@@ -3631,7 +3647,7 @@ async function pokazOscylatory() {
      dziennie cena robi ruch ≥2% / ≥1,5% (zygzak na świecach 5-minutowych z 3 dni). Stan
      z klasyfikatora: boczniak i kanały nadają się pod siatkę, rozpalenie to kandydat
      (czekamy 12h), spread duży = wypełnienia przychodzą na pchnięciach przeciw Tobie.
-     Skan co godzinę, tylko pary z obrotem ≥100 tys. i ≥8 tys. transakcji na dobę.</p>
+     Skan co godzinę, tylko pary z obrotem ≥200 tys. i ≥8 tys. transakcji na dobę.</p>
      <table style="width:100%;border-collapse:collapse;font-size:12px">
      <tr class="muted"><td style="padding:3px 8px">coin</td><td style="padding:3px 8px">stan</td>
      <td style="padding:3px 8px;text-align:right">sw 2%/1,5%</td>
@@ -3652,24 +3668,143 @@ async function pokazSiatki() {
     <td style="padding:3px 8px"><b style="cursor:pointer" data-goto="${s.symbol}">${s.symbol.toUpperCase().replace(/USDT$/, "")}</b></td>
     <td style="padding:3px 8px;text-align:right">${(+s.cel_pct).toFixed(1)}%</td>
     <td style="padding:3px 8px;text-align:right">${s.obroty_realne}</td>
-    <td style="padding:3px 8px;text-align:right"><b>${(+s.zysk_realny_pct).toFixed(1)}%</b></td>
+    <td style="padding:3px 8px;text-align:right"><b>${s.obroty_pewne}</b></td>
+    <td style="padding:3px 8px;text-align:right"><b>${(+s.zysk_pewny_pct).toFixed(1)}%</b></td>
     <td style="padding:3px 8px;text-align:right" class="muted">${s.wiszace}</td>
     <td style="padding:3px 8px" class="muted">${s.od}</td></tr>`).join("");
   const decyzje = log.map((l) => `<div style="padding:4px 0;border-bottom:1px solid var(--border)">
     <span class="muted">${plDate(l.ts, false)} ${String(l.ts).slice(11, 16)} · siatka #${l.siatka}</span><br>${String(l.powod).replace(/</g, "&lt;")}</div>`).join("");
   openModal(`Siatki papierowe (${ab.length})`,
     `<p class="muted" style="margin-bottom:6px">Symulacja bez ryzyka: nic nie kupuje naprawdę.
-     „Obroty realne" liczą tylko wypełnienia z pokryciem w płynności. Zysk to suma
-     (cel minus prowizja) × obroty, w % kapitału jednego poziomu. Nominałom nie ufać,
-     służą do PORÓWNYWANIA wariantów. Przegląd 5.09.</p>
+     „Realne" = wypełnienia z pokryciem w płynności. „Pewne" ostrzej: cena musiała
+     przejść ≥0,1% PRZEZ poziom (kupno i sprzedaż), nie tylko go dotknąć. Dotknięcie
+     bez przebicia mogłoby nas na realu ominąć. Zysk = (cel minus prowizje) × obroty
+     pewne, w % kapitału jednego poziomu. W siatkach kanałowych „pewne" bywa lekko
+     zawyżone: poziom zwolniony wątpliwą sprzedażą i przesunięty na nowe ceny liczy
+     dalej, choć w realu kapitał mógłby jeszcze wisieć na starym celu. Nominałom nie ufać, służą do PORÓWNYWANIA
+     wariantów. Przegląd 5.09.</p>
      <table style="width:100%;border-collapse:collapse;font-size:12px">
      <tr class="muted"><td style="padding:3px 8px">para</td><td style="padding:3px 8px;text-align:right">cel</td>
-     <td style="padding:3px 8px;text-align:right">obroty real.</td><td style="padding:3px 8px;text-align:right">zysk real.</td>
+     <td style="padding:3px 8px;text-align:right">realne</td><td style="padding:3px 8px;text-align:right">pewne</td>
+     <td style="padding:3px 8px;text-align:right">zysk pewny</td>
      <td style="padding:3px 8px;text-align:right">wisi</td><td style="padding:3px 8px">od</td></tr>${wiersze}</table>
      <h3 style="margin:12px 0 4px;font-size:12px;text-transform:uppercase" class="muted">Decyzje automatu (dziennik)</h3>
      <div style="font-size:12px">${decyzje || '<span class="muted">jeszcze żadnych</span>'}</div>`);
 }
 $("btn-siatki") && $("btn-siatki").addEventListener("click", pokazSiatki);
+
+// --- HISTORIA TRANSAKCJI: pelny zapis wypelnien z HTX + wynik $ i % ---
+// Wynik liczony metoda sredniego kosztu, po oplatach (oplata z API, a dla wpisow
+// recznych sprzed startu zapisu przyjmujemy standardowe 0,2%). Kupno placi oplate
+// w coinie (dostajesz mniej sztuk), sprzedaz w USDT (dostajesz mniej dolarow).
+async function pokazHistorie() {
+  openModal("Historia transakcji", `<div class="muted">ładowanie…</div>`);
+  const fills = await fetchWypelnienia().catch(() => []);
+  const OPLATA = 0.002;
+  // czas lokalny uzytkownika (plDate liczy dobe HTX UTC+8, tu bylby o dzien do przodu)
+  const kiedy = (ts) => { const d = new Date(ts);
+    return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")} ` +
+           `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  const stan = new Map();           // symbol -> { qty, koszt }
+  const wiersze = [];
+  let zyskRazem = 0, kosztZamkniety = 0;
+  for (const w of fills) {
+    const cena = +w.cena, il = +w.ilosc;
+    const st = stan.get(w.symbol) ?? { qty: 0, koszt: 0 };
+    let zysk = null, pct = null, uwaga = "";
+    if (w.strona === "kupno") {
+      const opCoin = (w.oplata != null && w.waluta_oplaty && w.waluta_oplaty !== "usdt")
+        ? +w.oplata : il * OPLATA;
+      st.qty += il - opCoin;
+      st.koszt += cena * il;
+    } else {
+      const opUsdt = (w.oplata != null && w.waluta_oplaty === "usdt")
+        ? +w.oplata : cena * il * OPLATA;
+      const przychod = cena * il - opUsdt;
+      if (st.qty >= il * 0.999 && st.qty > 0) {
+        const sprzedane = Math.min(il, st.qty);
+        const kosztCz = (st.koszt / st.qty) * sprzedane;
+        zysk = przychod - kosztCz;
+        pct = kosztCz > 0 ? (zysk / kosztCz) * 100 : null;
+        st.qty -= sprzedane; st.koszt -= kosztCz;
+        if (st.qty < 1e-9 || st.koszt < 0.05) { st.qty = 0; st.koszt = 0; }
+        zyskRazem += zysk; kosztZamkniety += kosztCz;
+      } else if (st.qty > 0) {
+        // czesciowe pokrycie: wynik liczymy TYLKO dla zapisanej czesci monet
+        // (proporcja przychodu), reszta pochodzi sprzed zapisu. Stan sie zeruje,
+        // zeby te same monety nie liczyly sie drugi raz przy kolejnych sprzedazach.
+        const kosztCz = st.koszt;
+        const przychodCz = przychod * (st.qty / il);
+        zysk = przychodCz - kosztCz;
+        pct = kosztCz > 0 ? (zysk / kosztCz) * 100 : null;
+        st.qty = 0; st.koszt = 0;
+        zyskRazem += zysk; kosztZamkniety += kosztCz;
+        uwaga = "częściowo: reszta sprzed zapisu";
+      } else {
+        uwaga = "kupno sprzed zapisu";
+      }
+    }
+    stan.set(w.symbol, st);
+    wiersze.push({ ...w, wartosc: cena * il, zysk, pct, uwaga });
+  }
+  const otwarte = [...stan.entries()].filter(([, s]) => s.qty > 1e-9 && s.koszt >= 0.05);
+  const kolor = (v) => v > 0 ? "#4ec08a" : v < 0 ? "#ef5350" : "var(--muted)";
+  const htmlWiersze = wiersze.slice().reverse().map((w) => {
+    const nm = w.symbol.toUpperCase().replace(/USDT$/, "");
+    const wyn = w.zysk == null
+      ? (w.uwaga ? `<span class="muted" title="sprzedaż bez zapisanego kupna: wyniku nie da się policzyć uczciwie">?</span>` : "")
+      : `<b style="color:${kolor(w.zysk)}">${w.zysk >= 0 ? "+" : ""}${w.zysk.toFixed(2)}$</b>
+         <span style="color:${kolor(w.zysk)}">(${w.pct >= 0 ? "+" : ""}${w.pct.toFixed(1)}%)</span>`;
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:4px 8px" class="muted">${kiedy(w.ts)}</td>
+      <td style="padding:4px 8px"><b style="cursor:pointer" data-goto="${w.symbol}">${nm}</b></td>
+      <td style="padding:4px 8px;color:${w.strona === "kupno" ? "#4ec08a" : "#ef5350"}">${w.strona}</td>
+      <td style="padding:4px 8px;text-align:right">${fmtPx(+w.cena)}</td>
+      <td style="padding:4px 8px;text-align:right" class="muted">${(+w.wartosc).toFixed(2)}$</td>
+      <td style="padding:4px 8px;text-align:right">${wyn}</td></tr>`;
+  }).join("");
+  const pctRazem = kosztZamkniety > 0 ? (zyskRazem / kosztZamkniety) * 100 : 0;
+  // rozroznienie po portfelu: coin z kupnem bez sprzedazy, ktorego JUZ NIE MAMY,
+  // zostal sprzedany zanim ruszyl zapis - nie udajemy, ze wciaz gra.
+  // state.poz moze byc jeszcze puste (start aplikacji, cichy blad odczytu),
+  // wiec dociagamy portfel na swiezo; bez portfela nie rozstrzygamy klasyfikacji.
+  let pozMapa = state.poz && state.poz.size ? state.poz : null;
+  if (!pozMapa) {
+    const p = await fetchPortfel().catch(() => []);
+    if (p.length) pozMapa = new Map(p.filter((x) => x.symbol).map((x) => [x.symbol, x]));
+  }
+  const wPortfelu = (sym) => pozMapa && pozMapa.has(sym);
+  const wGrze = otwarte.filter(([sym]) => wPortfelu(sym));
+  const bezSprzedazy = pozMapa ? otwarte.filter(([sym]) => !wPortfelu(sym)) : [];
+  const bezRozstrzygniecia = pozMapa ? [] : otwarte;
+  const otwarteHtml = (wGrze.length
+    ? `<p class="muted" style="margin-top:8px">W grze (kupione, jeszcze bez sprzedaży): ${wGrze
+        .map(([sym, s]) => `<b data-goto="${sym}" style="cursor:pointer">${sym.toUpperCase().replace(/USDT$/, "")}</b>
+        za ${s.koszt.toFixed(2)}$`).join(", ")}.</p>`
+    : "") + (bezSprzedazy.length
+    ? `<p class="muted" style="margin-top:4px">Sprzedane przed startem zapisu (brak wpisu sprzedaży,
+       wyniku nie liczymy): ${bezSprzedazy
+        .map(([sym]) => `<b data-goto="${sym}" style="cursor:pointer">${sym.toUpperCase().replace(/USDT$/, "")}</b>`).join(", ")}.</p>`
+    : "") + (bezRozstrzygniecia.length
+    ? `<p class="muted" style="margin-top:4px">Kupione, bez zapisanej sprzedaży (portfel chwilowo
+       niedostępny, więc nie rozstrzygam czy wciąż w grze): ${bezRozstrzygniecia
+        .map(([sym]) => `<b data-goto="${sym}" style="cursor:pointer">${sym.toUpperCase().replace(/USDT$/, "")}</b>`).join(", ")}.</p>`
+    : "");
+  openModal(`Historia transakcji (${wiersze.length})`,
+    `<p style="margin-bottom:6px">Wynik zamknięty łącznie:
+     <b style="color:${kolor(zyskRazem)};font-size:15px">${zyskRazem >= 0 ? "+" : ""}${zyskRazem.toFixed(2)}$
+     (${pctRazem >= 0 ? "+" : ""}${pctRazem.toFixed(1)}%)</b></p>
+     <p class="muted" style="margin-bottom:6px">Każde wypełnienie z HTX, zapisane na zawsze w chmurze
+     (API giełdy pamięta krótko). Wynik metodą średniego kosztu, po opłatach. Wiersze z „?" to
+     sprzedaże, do których nie mamy zapisanego kupna.</p>
+     <table style="width:100%;border-collapse:collapse;font-size:12px">
+     <tr class="muted"><td style="padding:3px 8px">kiedy</td><td style="padding:3px 8px">para</td>
+     <td style="padding:3px 8px">strona</td><td style="padding:3px 8px;text-align:right">cena</td>
+     <td style="padding:3px 8px;text-align:right">wartość</td>
+     <td style="padding:3px 8px;text-align:right">wynik</td></tr>${htmlWiersze ||
+     `<tr><td class="muted" style="padding:8px">Jeszcze pusto.</td></tr>`}</table>${otwarteHtml}`);
+}
+$("btn-historia") && $("btn-historia").addEventListener("click", pokazHistorie);
 
 // --- NOTATKI NA WYKRESIE: pinezka w wybranym punkcie (czas swiecy + cena) ---
 // Kotwica trzymana jest w module, bo modal notatnika jest przebudowywany przy
