@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="29.08-1235";</script></head>
+<script>window.CHMURA_BUILD="29.08-1242";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -3708,6 +3708,9 @@ async function pokazHistorie() {
   const stan = new Map();           // symbol -> { qty, koszt }
   const wiersze = [];
   let zyskRazem = 0, kosztZamkniety = 0;
+  // przeplyw gotowki: najnizsze saldo = ile wlasnych pieniedzy naprawde weszlo
+  // (te same dolary pracuja wielokrotnie, wiec suma kupien NIE jest wkladem)
+  let saldo = 0, minSaldo = 0;
   for (const w of fills) {
     const cena = +w.cena, il = +w.ilosc;
     const st = stan.get(w.symbol) ?? { qty: 0, koszt: 0 };
@@ -3717,10 +3720,12 @@ async function pokazHistorie() {
         ? +w.oplata : il * OPLATA;
       st.qty += il - opCoin;
       st.koszt += cena * il;
+      saldo -= cena * il; if (saldo < minSaldo) minSaldo = saldo;
     } else {
       const opUsdt = (w.oplata != null && w.waluta_oplaty === "usdt")
         ? +w.oplata : cena * il * OPLATA;
       const przychod = cena * il - opUsdt;
+      saldo += przychod;
       if (st.qty >= il * 0.999 && st.qty > 0) {
         const sprzedane = Math.min(il, st.qty);
         const kosztCz = (st.koszt / st.qty) * sprzedane;
@@ -3764,6 +3769,8 @@ async function pokazHistorie() {
       <td style="padding:4px 8px;text-align:right">${wyn}</td></tr>`;
   }).join("");
   const pctRazem = kosztZamkniety > 0 ? (zyskRazem / kosztZamkniety) * 100 : 0;
+  const wklad = Math.max(0, -minSaldo);
+  const pctWkladu = wklad > 0 ? (zyskRazem / wklad) * 100 : 0;
   // rozroznienie po portfelu: coin z kupnem bez sprzedazy, ktorego JUZ NIE MAMY,
   // zostal sprzedany zanim ruszyl zapis - nie udajemy, ze wciaz gra.
   // state.poz moze byc jeszcze puste (start aplikacji, cichy blad odczytu),
@@ -3791,9 +3798,13 @@ async function pokazHistorie() {
         .map(([sym]) => `<b data-goto="${sym}" style="cursor:pointer">${sym.toUpperCase().replace(/USDT$/, "")}</b>`).join(", ")}.</p>`
     : "");
   openModal(`Historia transakcji (${wiersze.length})`,
-    `<p style="margin-bottom:6px">Wynik zamknięty łącznie:
-     <b style="color:${kolor(zyskRazem)};font-size:15px">${zyskRazem >= 0 ? "+" : ""}${zyskRazem.toFixed(2)}$
-     (${pctRazem >= 0 ? "+" : ""}${pctRazem.toFixed(1)}%)</b></p>
+    `<p style="margin-bottom:2px">Wynik zamknięty łącznie:
+     <b style="color:${kolor(zyskRazem)};font-size:15px">${zyskRazem >= 0 ? "+" : ""}${zyskRazem.toFixed(2)}$</b>
+     ${wklad > 0 ? `= <b style="color:${kolor(zyskRazem)}">${pctWkladu >= 0 ? "+" : ""}${pctWkladu.toFixed(1)}%</b>
+     wkładu (${wklad.toFixed(0)}$ własnej gotówki w najgłębszym momencie)` : ""}</p>
+     <p class="muted" style="margin-bottom:6px">Średnio na jednym obrocie kapitałem:
+     ${pctRazem >= 0 ? "+" : ""}${pctRazem.toFixed(1)}% (zysk / suma kapitału zaangażowanego
+     w domkniętych transakcjach: ${kosztZamkniety.toFixed(0)}$, bo te same dolary pracowały wiele razy).</p>
      <p class="muted" style="margin-bottom:6px">Każde wypełnienie z HTX, zapisane na zawsze w chmurze
      (API giełdy pamięta krótko). Wynik metodą średniego kosztu, po opłatach. Wiersze z „?" to
      sprzedaże, do których nie mamy zapisanego kupna.</p>
