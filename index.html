@@ -206,7 +206,7 @@
     #main { grid-column: 1; grid-row: 3; }
   }
 </style>
-<script>window.CHMURA_BUILD="28.08-2141";</script></head>
+<script>window.CHMURA_BUILD="29.08-0736";</script></head>
 <body>
 <div id="layout">
   <header>
@@ -2003,7 +2003,8 @@ class ChmuraChart {
 
   // znaczniki na KAZDYM interwale: sygnal (doba HTX) przyciagany do pierwszej
   // swiecy danego dnia, delisting do najblizszej swiecy
-  setMarkersAll(signals, delistings) {
+  setMarkersAll(signals, delistings, extraMarks) {
+    this._extraMarks = extraMarks ?? this._extraMarks ?? [];
     if (!this.data.length) { this.candles.setMarkers([]); this._sigDots = []; return; }
     const times = this.data.map((r) => r.time);
     const snap = (t) => {
@@ -2073,6 +2074,10 @@ class ChmuraChart {
       }
       marks.push({ time: t, position: "aboveBar", color: kolor,
                    shape: "square", text: etykieta });
+    }
+    for (const m of (this._extraMarks ?? [])) {
+      const t = snap(m.time);
+      if (t !== null) marks.push({ ...m, time: t });
     }
     marks.sort((a, b) => a.time - b.time);
     this.candles.setMarkers(marks);
@@ -2859,7 +2864,16 @@ async function loadSymbol(sym) {
   }).catch(() => { /* brak notatek na wykresie */ });
   odswiezWejscia(sym);
   state.delist = await fetchDelistings(sym);
-  chart.setMarkersAll(state.signals, state.delist);
+  // Granica zrodel danych: 5min przed 18.08.2026 i 15min przed 21.07.2026 pochodza
+  // z Binance, nie z HTX (inna plynnosc!). Znacznik pokazuje, od ktorej swiecy
+  // patrzysz na wlasna gielde - zeby backtest oczami nie mieszal rynkow.
+  const GRANICA_HTX = { "5min": Date.parse("2026-08-18T00:00:00Z") / 1000,
+                        "15min": Date.parse("2026-07-21T00:00:00Z") / 1000 };
+  const gr = GRANICA_HTX[state.interval];
+  const extra = gr && rows.length && rows[0].time < gr
+    ? [{ time: gr, position: "belowBar", color: "#8a8a80", shape: "arrowUp",
+         text: "OD TĄD HTX (wcześniej Binance)" }] : [];
+  chart.setMarkersAll(state.signals, state.delist, extra);
   feed.watch(sym, HTX_PERIOD[state.interval]);
   // pasek info (wolumen / baza / kapitalizacja) - nie blokuje wykresu
   renderOrders();
